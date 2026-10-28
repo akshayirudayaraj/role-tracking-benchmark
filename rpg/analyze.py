@@ -87,7 +87,7 @@ def base_rates(out: Path) -> pd.DataFrame:
 def userness_vs_obey(df: pd.DataFrame, n_perm: int = 2000, seed: int = 0) -> dict:
     """Spearman across wrappers in the tool result (non-native): mean Userness vs obey rate."""
     d = df[(df.placement == "tool") & ~df.native & df.obeyed.notna()]
-    per = d.groupby("style_id").agg(userness=("userness", "mean"), obey=("obeyed", "mean"))
+    per = d.assign(obeyed=d.obeyed.astype(float)).groupby("style_id").agg(userness=("userness", "mean"), obey=("obeyed", "mean"))
     if len(per) < 5 or per.obey.nunique() < 2:
         return {"rho": np.nan, "p_perm": np.nan, "n_styles": len(per)}
     rho = spearmanr(per.userness, per.obey).statistic

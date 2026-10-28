@@ -70,8 +70,8 @@ probe:
 
 # ---------------------------------------------------------------- Step 2: benchmark prompts
 docs_path: data/docs.jsonl
-n_docs: 4                   # documents per (style, payload, placement): Userness is measured on all
-gen_docs: 2                 # ... answers are generated for the first `gen_docs` (obey rate)
+n_docs: 2                   # documents per (style, payload, placement): Userness is measured on all
+gen_docs: 1                 # ... answers are generated for the first `gen_docs` (obey rate)
 
 # Benign, string-checkable instructions planted in the document.
 payloads:

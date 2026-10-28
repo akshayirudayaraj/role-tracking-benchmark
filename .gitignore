@@ -6,3 +6,6 @@ runs/smoke/
 .pytest_cache/
 runs_*.log
 run_*.log
+runs/*/*/prompts.jsonl
+runs/*/*/roleness.parquet
+queue.sh
