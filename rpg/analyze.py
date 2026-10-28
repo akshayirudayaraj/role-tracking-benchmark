@@ -20,7 +20,7 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     d = 1 + z * z / n
     c = (p + z * z / (2 * n)) / d
     h = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return c - h, c + h
+    return max(0.0, c - h), min(1.0, c + h)
 
 
 def load_model(out: Path, roles: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
@@ -32,7 +32,8 @@ def load_model(out: Path, roles: list[str]) -> tuple[pd.DataFrame, pd.DataFrame,
 
 def per_example(scores: pd.DataFrame, rn: pd.DataFrame, layer: int) -> pd.DataFrame:
     inj = rn[(rn.layer == layer) & (rn.span == "injection")][["ex_id", "p_user", "p_tool", "p_assistant", "p_system"]]
-    df = scores[scores.placement != "clean"].merge(inj, on="ex_id", how="left")
+    core = rn[(rn.layer == layer) & (rn.span == "injection_core")][["ex_id", "p_user"]].rename(columns={"p_user": "userness_core"})
+    df = scores[scores.placement != "clean"].merge(inj, on="ex_id", how="left").merge(core, on="ex_id", how="left")
     df["userness"] = df["p_user"]
     df["outcome"] = np.select(
         [df.complied & df.task_done, df.complied & ~df.task_done, ~df.complied & df.task_done],
@@ -46,7 +47,7 @@ def cell_table(df: pd.DataFrame, scores: pd.DataFrame) -> pd.DataFrame:
         k, n = int(g.complied.sum()), len(g)
         lo, hi = wilson(k, n)
         rows.append({"placement": pl, "cue": cue, "n": n, "compliance": k / n, "ci_lo": lo, "ci_hi": hi,
-                     "task_done": g.task_done.mean(), "injection_only": (g.outcome == "injection_only").mean(),
+                     "task_done": g.task_done.mean(), "finished": g.finished.mean(), "injection_only": (g.outcome == "injection_only").mean(),
                      "userness": g.userness.mean(), "userness_se": g.userness.std(ddof=1) / np.sqrt(n),
                      "toolness": g.p_tool.mean()})
     clean = scores[scores.placement == "clean"]
@@ -145,14 +146,15 @@ def plot_by_condition(all_cells: dict[str, pd.DataFrame], path: Path):
                 base = cells[cells.placement == "clean"].compliance
                 if len(base):
                     ax.axhline(base.iloc[0], color=MUTED, ls="--", lw=1)
-                    ax.text(len(cues) - 0.5, base.iloc[0] + 0.02, "no-injection base rate", color=MUTED, fontsize=7, ha="right")
+                    ax.text(-0.45, base.iloc[0] + 0.02, "no-injection base rate", color=MUTED, fontsize=7, ha="left")
             ax.set_xticks(range(len(cues)))
             ax.set_xticklabels(cues, rotation=20, ha="right", fontsize=8)
             ax.set_ylim(0, 1)
             ax.set_title(f"{m} — {lab}", fontsize=10, color=INK, loc="left")
             _style(ax)
-        axes[r, 0].legend(fontsize=8, frameon=False, title="placement", title_fontsize=8)
-    fig.tight_layout()
+    h, l = axes[0, 0].get_legend_handles_labels()
+    fig.legend(h, l, loc="upper center", ncol=len(l), fontsize=8, frameon=False, title="placement", title_fontsize=8)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.35 / (3.2 * len(models))))
     fig.savefig(path, dpi=160)
     plt.close(fig)
 
@@ -182,6 +184,10 @@ def plot_scatter(all_cells: dict[str, pd.DataFrame], all_corr: dict[str, dict], 
 
 
 def _md(df: pd.DataFrame) -> str:
+    df = df.copy()
+    for c in df.columns:
+        if pd.api.types.is_integer_dtype(df[c]):
+            df[c] = df[c].astype(str)
     return df.to_markdown(index=False, floatfmt=".3f")
 
 

@@ -69,11 +69,11 @@ probe:
   source: {dataset: allenai/c4, config: en, split: validation}
   n_texts: 150              # neutral texts; each is wrapped in every role
   max_text_tokens: 256
-  tokens_per_seq: 64        # content tokens sampled per sequence for training (memory)
+  tokens_per_seq: 128       # content tokens sampled per sequence for training (memory)
   layer_stride: 4           # probe every k-th layer
   eval_layer: mid           # "mid" = middle probed layer (paper default) or an int
-  C_grid: [1.0e-3, 1.0e-2, 1.0e-1]
-  holdout_frac: 0.2         # split by base text, not by sequence
+  C_grid: [1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1]
+  prefix: mixed             # none = paper default; mixed = half the texts get the real system/tools header
   batch_size: 8
 
 # ---------------------------------------------------------------- dataset

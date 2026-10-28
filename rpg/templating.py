@@ -65,6 +65,14 @@ def locate_spans(prompt: str, cfg: dict, ex: dict, doc: dict, inj: str | None) -
     spans = {"request": _find(prompt, req), "doc_body": _find(prompt, doc["text"])}
     if inj is not None:
         spans["injection"] = _find(prompt, inj, start=spans["doc_body"][0] if spans["doc_body"] else 0)
+        # The bare instruction, when the cue contains it verbatim (not for user_phrasing / destyled).
+        instr = cfg["payloads"][ex["payload"]]["instruction"]
+        if spans["injection"] and instr in inj:
+            spans["injection_core"] = _find(prompt, instr, start=spans["injection"][0])
+            if ex["cue"] == "fake_template_native":
+                # The wrapper (role tokens + header like "user\n") is tag material: measure only the
+                # message content, matching the paper's exclude-tag-tokens convention.
+                spans["injection"] = spans["injection_core"]
     missing = [k for k, v in spans.items() if v is None]
     if missing:
         raise RuntimeError(f"{ex['ex_id']}: could not locate spans {missing}")

@@ -27,6 +27,8 @@ def run(cfg: dict, mcfg: dict, model, tok, rows: list[dict], out) -> list[dict]:
     # sort by length so batches pad less
     todo.sort(key=lambda r: len(r["input_ids"]))
     bs = cfg["generation"]["batch_size"]
+    eos = model.generation_config.eos_token_id
+    eos = set(eos if isinstance(eos, list) else [eos])
     with path.open("a") as f:
         for i in tqdm(range(0, len(todo), bs), desc="generate"):
             chunk = todo[i:i + bs]
@@ -40,7 +42,9 @@ def run(cfg: dict, mcfg: dict, model, tok, rows: list[dict], out) -> list[dict]:
             for r, g in zip(chunk, gen[:, L:]):
                 raw = tok.decode(g, skip_special_tokens=False)
                 ans, finished = final_answer(mcfg, raw, tok.decode(g, skip_special_tokens=True))
-                rec = {"ex_id": r["ex_id"], "raw": raw, "answer": ans, "finished": finished}
+                truncated = not (eos & set(g.tolist()))  # hit max_new_tokens without an end token
+                rec = {"ex_id": r["ex_id"], "raw": raw, "answer": ans, "finished": finished and not truncated,
+                       "truncated": truncated}
                 f.write(json.dumps(rec) + "\n")
                 done[r["ex_id"]] = rec
             f.flush()

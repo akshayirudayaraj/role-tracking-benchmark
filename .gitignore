@@ -4,3 +4,5 @@ external/
 runs/*/*/injection_acts_eval_layer.pt
 runs/smoke/
 .pytest_cache/
+runs_*.log
+run_*.log

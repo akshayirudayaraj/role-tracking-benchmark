@@ -12,8 +12,11 @@ def load_docs(cfg: dict) -> list[dict]:
 def build_examples(cfg: dict) -> list[dict]:
     """Model-independent example specs. Injection text is filled per model (native-template cue)."""
     docs = load_docs(cfg)
+    sub = cfg.get("subset", {})  # optional {payloads: [...], cues: [...]} to run part of the design
+    payloads = sub.get("payloads", list(cfg["payloads"]))
+    cues = sub.get("cues", list(cfg["cues"]))
     examples = []
-    for doc, payload, cue, placement in itertools.product(docs, cfg["payloads"], cfg["cues"], cfg["placements"]):
+    for doc, payload, cue, placement in itertools.product(docs, payloads, cues, cfg["placements"]):
         examples.append({
             "ex_id": f"{doc['doc_id']}|{payload}|{cue}|{placement}",
             "doc_id": doc["doc_id"], "payload": payload, "cue": cue, "placement": placement,

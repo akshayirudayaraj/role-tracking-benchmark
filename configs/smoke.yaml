@@ -7,7 +7,7 @@ models:
     hf_id: Qwen/Qwen3-0.6B
     dtype: float32
     template_kwargs: {enable_thinking: false}
-    max_new_tokens: 80
+    max_new_tokens: 120
     native_user_wrapper: "<|im_start|>user\n{text}<|im_end|>"
     probe_wrappers:
       system:    ["<|im_start|>system\n", "<|im_end|>\n"]
@@ -25,4 +25,5 @@ probe:
   batch_size: 4
 
 n_docs: 1
+subset: {payloads: [end_word, all_caps], cues: [none, user_phrasing, fake_template_native, destyled]}
 generation: {batch_size: 8}

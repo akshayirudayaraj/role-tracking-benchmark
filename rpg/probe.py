@@ -17,7 +17,7 @@ import torch
 from tqdm import tqdm
 
 from rpg import model as M
-from rpg.templating import char_spans_to_token_idx
+from rpg.templating import FETCH_TOOL, char_spans_to_token_idx
 
 
 def load_neutral_texts(cfg: dict, tok) -> list[str]:
@@ -36,15 +36,31 @@ def load_neutral_texts(cfg: dict, tok) -> list[str]:
     return texts
 
 
-def build_sequences(cfg: dict, mcfg: dict, texts: list[str]) -> list[dict]:
+def build_sequences(cfg: dict, mcfg: dict, tok, texts: list[str]) -> list[dict]:
+    """Wrap each text in every role. With probe.prefix = "mixed", half the base texts (all roles of a
+    text alike) are preceded by the model's real system/tools header, as in eval prompts, so the probe
+    doesn't confuse 'late in a long context' with a role."""
+    rng = random.Random(cfg["seed"])
+    header = system_header(mcfg, tok) if cfg["probe"].get("prefix", "none") == "mixed" else ""
     seqs = []
     for ti, text in enumerate(texts):
+        prefix = header if header and rng.random() < 0.5 else ""
         for role in cfg["probe"]["roles"]:
             pre, suf = mcfg["probe_wrappers"][role]
+            pre = prefix + pre
             content = json.dumps(text)[1:-1] if role in mcfg.get("json_escape_roles", []) else text
             seqs.append({"text_ix": ti, "role": role, "prompt": pre + content + suf,
                          "span": (len(pre), len(pre) + len(content))})
     return seqs
+
+
+def system_header(mcfg: dict, tok) -> str:
+    """Everything the real chat template emits before the first user turn when the fetch_url tool is
+    available (system prompt + tool schema; gpt-oss adds a developer message)."""
+    marker = "\x00MARK\x00"
+    s = tok.apply_chat_template([{"role": "user", "content": marker}], tools=[FETCH_TOOL], tokenize=False,
+                                **mcfg.get("template_kwargs", {}))
+    return s[: s.index(mcfg["probe_wrappers"]["user"][0] + marker)]
 
 
 def extract_training_acts(cfg: dict, model, tok, seqs: list[dict], layers: list[int]):
@@ -61,14 +77,14 @@ def extract_training_acts(cfg: dict, model, tok, seqs: list[dict], layers: list[
         chunk = items[i:i + bs]
         got = M.capture(model, tok, [c[0] for c in chunk], layers, [c[1] for c in chunk])
         for li in layers:
-            acts[li].extend(got[li])
+            acts[li].extend(a.half() for a in got[li])
     labels = [cfg["probe"]["roles"].index(s["role"]) for s in seqs]
     return {li: acts[li] for li in layers}, labels
 
 
 def fit_lr(X: torch.Tensor, y: torch.Tensor, C: float, n_cls: int, iters: int = 300) -> dict:
     dev = M.device()
-    X, y = X.to(dev), y.to(dev)
+    X, y = X.to(dev).float(), y.to(dev)
     mu, sd = X.mean(0), X.std(0) + 1e-6
     Xs = (X - mu) / sd
     W = torch.zeros(X.shape[1], n_cls, device=dev, requires_grad=True)
@@ -91,7 +107,7 @@ def predict_proba(p: dict, X: torch.Tensor) -> torch.Tensor:
 
 
 def _eval(p, X, y):
-    pr = predict_proba(p, X)
+    pr = predict_proba(p, X.float())
     nll = torch.nn.functional.nll_loss(torch.log(pr + 1e-12), y).item()
     pred = pr.argmax(-1)
     n = p["W"].shape[1]
@@ -140,7 +156,7 @@ def run(cfg: dict, mcfg: dict, model, tok, out) -> dict:
         return torch.load(path, weights_only=False)
     layers = M.probe_layers(model, cfg["probe"]["layer_stride"])
     texts = load_neutral_texts(cfg, tok)
-    seqs = build_sequences(cfg, mcfg, texts)
+    seqs = build_sequences(cfg, mcfg, tok, texts)
     acts, labels = extract_training_acts(cfg, model, tok, seqs, layers)
     probes = train_probes(cfg, acts, labels, [s["text_ix"] for s in seqs])
     bundle = {"probes": probes, "layers": layers, "eval_layer": eval_layer(cfg, layers), "n_texts": len(texts)}
