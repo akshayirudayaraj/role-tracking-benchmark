@@ -161,7 +161,7 @@ def plot_steer(tabs: dict[str, pd.DataFrame], path: Path):
         ax.set_title(m, fontsize=10, color=INK)
         _style(ax)
     axes[0][0].set_ylabel("obey rate")
-    axes[0][0].legend(frameon=False, fontsize=7, loc="upper left")
+    axes[0][0].legend(frameon=False, fontsize=7, loc="lower left")
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
