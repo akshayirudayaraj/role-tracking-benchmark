@@ -10,13 +10,13 @@ import json
 
 import torch
 
-from rpg import analyze, generate, measure, probe, prompts, report, score
+from rpg import analyze, generate, measure, probe, prompts, report, score, steer
 from rpg import model as M
 from rpg.config import load_config, model_cfg, out_dir
 from rpg.dataset import load_docs
 
-STAGES = ["probe", "measure", "generate", "score", "analyze"]
-MODEL_STAGES = {"probe", "measure", "generate", "score"}
+STAGES = ["probe", "measure", "generate", "score", "steer", "analyze"]
+MODEL_STAGES = {"probe", "measure", "generate", "score", "steer"}
 
 
 def main():
@@ -39,7 +39,7 @@ def main():
         if set(stages) & {"measure", "generate", "score"}:
             rows = prompts.build(cfg, mcfg, tok, out)
             print(f"{len(rows)} prompts; median length {sorted(len(r['input_ids']) for r in rows)[len(rows) // 2]} tokens")
-        if "probe" in stages or "measure" in stages:
+        if set(stages) & {"probe", "measure", "steer"}:
             bundle = probe.run(cfg, mcfg, model, tok, out)
         if "measure" in stages:
             measure.run(cfg, model, tok, rows, bundle, out)
@@ -50,6 +50,8 @@ def main():
             docs = {d["doc_id"]: d for d in load_docs(cfg)}
             recs = score.score(cfg, rows, gens, docs)
             (out / "scores.jsonl").write_text("\n".join(json.dumps(r) for r in recs))
+        if "steer" in stages:
+            steer.run(cfg, mcfg, model, tok, bundle, out)
         del model
         gc.collect()
         if torch.cuda.is_available():

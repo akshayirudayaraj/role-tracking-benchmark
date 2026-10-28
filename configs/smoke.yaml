@@ -26,5 +26,7 @@ probe:
   batch_size: 4
 
 n_docs: 1
-subset: {payloads: [end_word, all_caps], cues: [none, user_phrasing, fake_template_native, destyled]}
-generation: {batch_size: 8}
+gen_docs: 1
+subset: {payloads: [end_word, french], styles: [naive, context_ignoring, paper000, paper012, paper060, paper100]}
+steer: {n_docs: 2, alphas: [0.0, 0.4], reverse_alphas: [0.4], random_alphas: [0.4]}
+generation: {batch_size: 8, do_sample: false}

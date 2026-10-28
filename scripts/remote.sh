@@ -15,8 +15,9 @@ case $cmd in
                --exclude '.*_cache' --exclude '*.log' -e "${SSH% *}" ./ "${SSH##* }:$DEST/" ;;
   setup) $SSH "cd $DEST && bash scripts/setup.sh" ;;
   run)   cfg=${1:-pilot}; shift || true
+         # setsid + redirected stdin so the SSH session returns while the job keeps running
          $SSH "cd $DEST && source .venv/bin/activate && export HF_HOME=/workspace/hf && \
-               nohup python -m rpg.run configs/$cfg.yaml $* > run_$cfg.log 2>&1 < /dev/null & echo started" ;;
+               (setsid nohup python -m rpg.run configs/$cfg.yaml $* > run_$cfg.log 2>&1 < /dev/null &) && echo started" ;;
   log)   $SSH "tail -n 30 $DEST/run_${1:-pilot}.log" ;;
   pull)  rsync -rltz --exclude 'injection_acts_*.pt' -e "${SSH% *}" "${SSH##* }:$DEST/runs/" runs/ ;;
 esac

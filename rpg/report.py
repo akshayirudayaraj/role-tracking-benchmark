@@ -44,7 +44,7 @@ def probes(cfg: dict, names: list[str]) -> None:
     for m, pm in metrics.items():
         roles = pm[0]["roles"]
         best = max(pm, key=lambda p: p["test_span_acc"])
-        mid = pm[len(pm) // 2]
+        mid = next((p for p in pm if p.get("eval_layer")), pm[len(pm) // 2])
         md.append(f"## {m}\n")
         md.append(f"Chance = {1 / len(roles):.2f}. Best layer {best['layer']} (span acc {best['test_span_acc']:.3f}); "
                   f"eval layer {mid['layer']} (span {mid['test_span_acc']:.3f}, token {mid['test_acc']:.3f}).\n")

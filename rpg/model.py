@@ -26,10 +26,15 @@ def load(mcfg: dict):
         # transformers' threaded weight loader can hang on macOS; load sequentially there.
         os.environ.setdefault("HF_DEACTIVATE_ASYNC_LOAD", "1")
     model = AutoModelForCausalLM.from_pretrained(
-        mcfg["hf_id"], dtype=getattr(torch, mcfg.get("dtype", "bfloat16")),
+        mcfg["hf_id"], dtype=_dtype(mcfg.get("dtype", "bfloat16")),
         device_map=dev, **mcfg.get("load_kwargs", {}),
     ).eval()
     return model, tok
+
+
+def _dtype(name: str):
+    """"auto" keeps a checkpoint's own format (gpt-oss: MXFP4 experts, ~14 GB instead of ~42 GB in bf16)."""
+    return "auto" if name == "auto" else getattr(torch, name)
 
 
 def decoder_layers(model):

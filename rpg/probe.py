@@ -162,9 +162,16 @@ def train_probes(cfg: dict, acts: dict, labels: list[int], text_ix: list[int], r
     return probes
 
 
-def eval_layer(cfg: dict, layers: list[int]) -> int:
+def eval_layer(cfg: dict, probes: dict) -> int:
+    """Layer used downstream: best validation span accuracy ("best_val"), the middle probed layer
+    ("mid", the paper's default), or a fixed index."""
     el = cfg["probe"]["eval_layer"]
-    return sorted(layers)[len(layers) // 2] if el == "mid" else int(el)
+    if el == "best_val":
+        return max(probes, key=lambda li: probes[li]["val"]["span_acc"])
+    if el == "mid":
+        layers = sorted(probes)
+        return layers[len(layers) // 2]
+    return int(el)
 
 
 def run(cfg: dict, mcfg: dict, model, tok, out) -> dict:
@@ -177,12 +184,13 @@ def run(cfg: dict, mcfg: dict, model, tok, out) -> dict:
     seqs = build_sequences(cfg, mcfg, tok, texts)
     acts, labels = extract_training_acts(cfg, model, tok, seqs, layers, roles)
     probes = train_probes(cfg, acts, labels, [s["text_ix"] for s in seqs], roles)
-    bundle = {"probes": probes, "layers": layers, "eval_layer": eval_layer(cfg, layers), "n_texts": len(texts),
+    bundle = {"probes": probes, "layers": layers, "eval_layer": eval_layer(cfg, probes), "n_texts": len(texts),
               "roles": roles}
     torch.save(bundle, path)
     summary = [{"layer": li, "C": p["C"], "val_acc": p["val"]["acc"], "test_acc": p["test"]["acc"],
                 "test_span_acc": p["test"]["span_acc"], "test_confusion": p["test"]["confusion"],
-                "test_span_confusion": p["test"]["span_confusion"], "roles": p["roles"]}
+                "val_span_acc": p["val"]["span_acc"], "test_span_confusion": p["test"]["span_confusion"],
+                "roles": p["roles"], "eval_layer": li == bundle["eval_layer"]}
                for li, p in probes.items()]
     (out / "probe_metrics.json").write_text(json.dumps(summary, indent=1))
     return bundle

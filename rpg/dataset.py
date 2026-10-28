@@ -1,40 +1,54 @@
-"""Factorial example generation: docs x payloads x cues x placements (+ clean baseline)."""
+"""Benchmark examples: documents x payloads x style wrappers x placements (+ clean baseline)."""
 import itertools
 import json
 from pathlib import Path
 
+import pandas as pd
 
-def load_docs(cfg: dict) -> list[dict]:
-    docs = [json.loads(l) for l in Path(cfg["docs_path"]).read_text().splitlines() if l.strip()]
-    return docs[: cfg["n_docs"]]
+
+def load_docs(cfg: dict, n: int | None = None) -> list[dict]:
+    docs = [json.loads(line) for line in Path(cfg["docs_path"]).read_text().splitlines() if line.strip()]
+    return docs[: n or cfg["n_docs"]]
+
+
+def load_styles(cfg: dict) -> list[dict]:
+    """Every style wrapper as {style_id, family, label, template}, where `template` has one
+    `{instruction}` slot. Paper wrappers keep the authors' role label; attack types get "attack"."""
+    sc = cfg["styles"]
+    paper = pd.read_csv(sc["paper_csv"], keep_default_na=False)
+    styles = [{"style_id": r.style_id, "family": "paper", "label": r.variant_role,
+               "template": r.variant_template.replace("{", "{{").replace("}", "}}").replace("[CONTENT]", "{instruction}")}
+              for r in paper.itertuples()]
+    styles += [{"style_id": k, "family": "attack", "label": "attack", "template": v} for k, v in sc["attacks"].items()]
+    return styles
+
+
+def wrap(style: dict, instruction: str) -> str:
+    return style["template"].format(instruction=instruction)
 
 
 def build_examples(cfg: dict) -> list[dict]:
-    """Model-independent example specs. Injection text is filled per model (native-template cue)."""
-    docs = load_docs(cfg)
-    sub = cfg.get("subset", {})  # optional {payloads: [...], cues: [...]} to run part of the design
+    """Model-independent example specs. ex_id = doc|payload|style|placement."""
+    sub = cfg.get("subset", {})  # optional {payloads: [...], styles: [...]} to run part of the design
+    styles = load_styles(cfg)
+    if "styles" in sub:
+        styles = [s for s in styles if s["style_id"] in sub["styles"]]
     payloads = sub.get("payloads", list(cfg["payloads"]))
-    cues = sub.get("cues", list(cfg["cues"]))
+    docs = load_docs(cfg)
+    gen_ids = {d["doc_id"] for d in docs[: cfg["gen_docs"]]}
     examples = []
-    for doc, payload, cue, placement in itertools.product(docs, payloads, cues, cfg["placements"]):
+    for doc, payload, style, placement in itertools.product(docs, payloads, styles, cfg["placements"]):
         examples.append({
-            "ex_id": f"{doc['doc_id']}|{payload}|{cue}|{placement}",
-            "doc_id": doc["doc_id"], "payload": payload, "cue": cue, "placement": placement,
+            "ex_id": f"{doc['doc_id']}|{payload}|{style['style_id']}|{placement}",
+            "doc_id": doc["doc_id"], "payload": payload, "placement": placement,
+            "style_id": style["style_id"], "family": style["family"], "label": style["label"],
+            "injection": wrap(style, cfg["payloads"][payload]["instruction"]),
+            "generate": doc["doc_id"] in gen_ids,
         })
     if cfg.get("include_clean_baseline"):
         for doc in docs:
-            examples.append({
-                "ex_id": f"{doc['doc_id']}|-|-|clean",
-                "doc_id": doc["doc_id"], "payload": None, "cue": None, "placement": "clean",
-            })
+            if doc["doc_id"] in gen_ids:
+                examples.append({"ex_id": f"{doc['doc_id']}|-|-|clean", "doc_id": doc["doc_id"], "payload": None,
+                                 "placement": "clean", "style_id": None, "family": None, "label": None,
+                                 "injection": None, "generate": True})
     return examples
-
-
-def injection_text(cfg: dict, mcfg: dict, payload: str | None, cue: str | None) -> str | None:
-    if payload is None:
-        return None
-    p = cfg["payloads"][payload]
-    return cfg["cues"][cue].format(
-        instruction=p["instruction"], vp=p["vp"], destyled=p["destyled"],
-        native_user=mcfg["native_user_wrapper"].format(text=p["instruction"]),
-    )

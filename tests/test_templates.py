@@ -5,7 +5,7 @@ import pytest
 from transformers import AutoTokenizer
 
 from rpg.config import load_config, model_cfg
-from rpg.dataset import build_examples, injection_text, load_docs
+from rpg.dataset import build_examples, load_docs
 from rpg.templating import (
     FETCH_TOOL,
     build_messages,
@@ -55,14 +55,16 @@ def test_wrappers_match_real_template(name):
 
 @pytest.mark.parametrize("name", list(CFG["models"]))
 def test_spans_locatable(name):
+    """Every wrapper x payload x placement renders and its spans map to tokens (one document)."""
     mcfg, tok = model_cfg(CFG, name), _tok(name)
-    docs = {d["doc_id"]: d for d in load_docs(CFG)}
-    for ex in build_examples(CFG):
+    cfg = {**CFG, "n_docs": 1, "gen_docs": 1}
+    docs = {d["doc_id"]: d for d in load_docs(cfg)}
+    for ex in build_examples(cfg):
         doc = docs[ex["doc_id"]]
-        inj = injection_text(CFG, mcfg, ex["payload"], ex["cue"])
+        inj = ex["injection"]
         prompt = render(tok, mcfg, *build_messages(CFG, ex, doc, inj))
         spans = locate_spans(prompt, CFG, ex, doc, inj)
         _, toks = char_spans_to_token_idx(tok, prompt, spans)
         if inj is not None:
             assert spans["injection"][0] > spans["doc_body"][0]
-            assert len(toks["injection"]) >= 3
+            assert len(toks["injection_core"]) >= 3

@@ -1,7 +1,7 @@
 torch>=2.6
 transformers>=4.56
 accelerate
-kernels
+kernels>=0.17.2,<0.18   # transformers needs this range to keep gpt-oss in MXFP4
 datasets
 pandas
 pyarrow
