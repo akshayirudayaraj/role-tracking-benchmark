@@ -32,7 +32,7 @@ Span-level confusion at layer 18 (rows: true role, columns: predicted role):
 
 - The meter passes its gate: the accuracy is much higher than chance at all layers after layer 0.
 - User and tool are the two roles that the meter confuses most (21% and 30%). In Qwen3, a tool result is inside a user turn (`<|im_start|>user<tool_response>...`). Thus the role tags of Qwen3 themselves put tool text near user text.
-- We used layer 18, not layer 2. The plan said to select the layer with the best validation accuracy, and that is layer 2. But an early layer is near the token embeddings, and the probe there can read which tag token is near, not a role that the model computes. The paper uses the middle layer. We report this change from the plan.
+- We used layer 18, not layer 2. The plan said to select the layer with the best validation accuracy, and that is layer 2. But an early layer is near the token embeddings. There, the probe can read which tag token is near, not a role that the model computes. The paper uses the middle layer. We report this change from the plan.
 
 ## Step 2: benchmark score
 
@@ -50,7 +50,7 @@ Answers were generated for one document (1,266 answers plus 3 with no instructio
 | Obey rate with no instruction (base rate) | 0 of 3 for each check |
 | Spearman, Userness vs obey rate across 193 wrappers (tool result) | rho = -0.07, permutation p = 0.34 |
 
-By wrapper group (paper labels; "native" = wrapper contains Qwen3 special tokens):
+By wrapper group (paper labels). "Native" wrappers contain the special tokens of Qwen3.
 
 | Group | Wrappers | Userness (tool) | Userness (user) | Obey rate (tool) |
 |---|---|---|---|---|
@@ -85,16 +85,16 @@ Userness is measured at layer 18 (where the steer is added) and at layer 35 (the
 
 ![steering](runs/pilot/summary/steering.png)
 
-- **The steer changes the perceived role, and the change continues to the last layer.** Toward user, the Userness at layer 35 increases from 0.33 to 0.67. This is the same as the Userness of a real user instruction (0.66). Toward tool, it decreases from 0.42 to 0.11. The random direction does not increase the Userness.
+- **The steer changes the perceived role.** The change continues to the last layer. Toward user, the Userness at layer 35 increases from 0.33 to 0.67. This is the same as the Userness of a real user instruction (0.66). Toward tool, it decreases from 0.42 to 0.11. The random direction does not increase the Userness.
 - **The steer does not change the obey rate.** The obey rate stays between 0.94 and 0.97 in all conditions. The summary task also stays at approximately 0.9, thus the steer did not damage the model.
-- **Interpretation.** For these safe instructions, Qwen3-8B obeys an instruction from a tool result when it perceives the text as a tool output, and also when it perceives the text as a user message. Thus the obey rate is at its maximum before the steer, and the steer cannot increase it. The toward-tool steer also did not decrease it. As the plan said, this result cannot separate two explanations: (a) the meter reads a signal that the model does not use for obedience, or (b) for instructions that do not conflict with the task, the perceived role does not control obedience. The next test is instructions that conflict with the task of the user, where the base obey rate in a tool result is not at the maximum.
+- **Interpretation.** For these safe instructions, Qwen3-8B obeys an instruction in a tool result in two conditions. It obeys when it perceives the text as tool output, and also when it perceives the text as a user message. Thus the obey rate is at its maximum before the steer, and the steer cannot increase it. The toward-tool steer also did not decrease it. As the plan said, this result cannot separate two explanations. (a) The meter reads a signal that the model does not use for obedience. (b) For instructions that do not conflict with the task, the perceived role does not control obedience. The next test must use instructions that conflict with the task of the user. For these, the obey rate in a tool result is not at the maximum.
 
 
 ## Limits
 
 1. **One model.** gpt-oss-20b and Llama-3.1-8B did not complete. We cannot compare models.
 2. **Ceiling effect.** The obey rate is near 100% in the tool result. Thus Steps 2 and 3 cannot relate Userness to behavior. Instructions that conflict with the task of the user (for example, the exclusive pairs of Control Illusion, or "do not summarize") will give a range of obey rates.
-3. **The meter is calibrated on single turns.** In the training data, each role is one turn alone. In a real tool result, the meter reads the web page as "thinking" (0.57) more than as "tool" (0.07), because the text comes after an assistant tool call. The Userness values are low in the tool result and are comparable between conditions. But the absolute values of the other roles are not reliable in long contexts.
+3. **The meter is calibrated on single turns.** In the training data, each role is one turn alone. In a real tool result, the meter reads the web page as "thinking" (0.57) more than as "tool" (0.07). A possible cause is that the text comes after an assistant tool call. The Userness values are low in the tool result and are comparable between conditions. But the absolute values of the other roles are not reliable in long contexts.
 4. **Layer choice.** We used the middle layer (18), not the layer with the best validation accuracy (2). See Step 1.
 5. **Small samples.** One document for answers, two for Userness, and three answers with no instruction for the base rate.
 6. **Simple checks.** The French check counts stop words, and the summary check counts shared content words. We examined some answers by eye, and the checks were correct.
