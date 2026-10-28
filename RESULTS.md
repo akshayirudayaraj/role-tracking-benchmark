@@ -4,7 +4,7 @@ Pilot run on 2026-10-28 on one A40 GPU (RunPod). Configuration: `configs/pilot.y
 Code to reproduce: `bash scripts/reproduce.sh pilot`.
 
 **Models.** Only Qwen3-8B completed all three steps before the deadline. The steps for Qwen3-8B used layer 18 for Userness and for the steer.
-gpt-oss-20b started Step 1, and Llama-3.1-8B did not run (it needs a Hugging Face token on the GPU machine).
+gpt-oss-20b completed Step 1 only, and Llama-3.1-8B did not run (it needs a Hugging Face token on the GPU machine).
 Thus the results below are for one model. They show that the method works end to end. They do not compare models.
 
 ## Step 1: role meter
@@ -32,7 +32,19 @@ Span-level confusion at layer 18 (rows: true role, columns: predicted role):
 
 - The meter passes its gate: the accuracy is much higher than chance at all layers after layer 0.
 - User and tool are the two roles that the meter confuses most (21% and 30%). In Qwen3, a tool result is inside a user turn (`<|im_start|>user<tool_response>...`). Thus the role tags of Qwen3 themselves put tool text near user text.
-- We used layer 18, not layer 2. The plan said to select the layer with the best validation accuracy, and that is layer 2. But an early layer is near the token embeddings. There, the probe can read which tag token is near, not a role that the model computes. The paper uses the middle layer. We report this change from the plan.
+**gpt-oss-20b (Step 1 only).** 24 layers. The layer with the best validation accuracy is layer 16. Its test span accuracy is 0.97 (token 0.88).
+Span-level confusion at layer 16:
+
+| true \ pred | system | user | assistant | tool | thinking |
+|---|---|---|---|---|---|
+| system | 0.92 | 0.07 | 0.00 | 0.00 | 0.01 |
+| user | 0.02 | 0.98 | 0.00 | 0.00 | 0.00 |
+| assistant | 0.00 | 0.00 | 1.00 | 0.00 | 0.00 |
+| tool | 0.00 | 0.00 | 0.00 | 0.99 | 0.01 |
+| thinking | 0.01 | 0.00 | 0.03 | 0.01 | 0.96 |
+
+- gpt-oss-20b separates the roles much better than Qwen3-8B. It does not confuse user and tool (0.00), but Qwen3-8B confuses them in 21% to 30% of spans. In gpt-oss-20b, a tool result is a separate message with its own role tag. This agrees with the blog post, which found that gpt-oss has the clearest linear separation of roles.
+- We used layer 18 for Qwen3-8B, not layer 2. The plan said to select the layer with the best validation accuracy, and that is layer 2. But an early layer is near the token embeddings. There, the probe can read which tag token is near, not a role that the model computes. The paper uses the middle layer. We report this change from the plan.
 
 ## Step 2: benchmark score
 
@@ -92,7 +104,7 @@ Userness is measured at layer 18 (where the steer is added) and at layer 35 (the
 
 ## Limits
 
-1. **One model.** gpt-oss-20b and Llama-3.1-8B did not complete. We cannot compare models.
+1. **One model for Steps 2 and 3.** gpt-oss-20b completed Step 1 only, and Llama-3.1-8B did not run. We cannot compare the benchmark score of models.
 2. **Ceiling effect.** The obey rate is near 100% in the tool result. Thus Steps 2 and 3 cannot relate Userness to behavior. Instructions that conflict with the task of the user (for example, the exclusive pairs of Control Illusion, or "do not summarize") will give a range of obey rates.
 3. **The meter is calibrated on single turns.** In the training data, each role is one turn alone. In a real tool result, the meter reads the web page as "thinking" (0.57) more than as "tool" (0.07). A possible cause is that the text comes after an assistant tool call. The Userness values are low in the tool result and are comparable between conditions. But the absolute values of the other roles are not reliable in long contexts.
 4. **Layer choice.** We used the middle layer (18), not the layer with the best validation accuracy (2). See Step 1.
