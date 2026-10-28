@@ -1,0 +1,28 @@
+# Smoke test: tiny model, few texts/examples. Runs on CPU in a few minutes.
+extends: base.yaml
+out_dir: runs/smoke
+
+models:
+  qwen3-0.6b:
+    hf_id: Qwen/Qwen3-0.6B
+    dtype: float32
+    template_kwargs: {enable_thinking: false}
+    max_new_tokens: 80
+    native_user_wrapper: "<|im_start|>user\n{text}<|im_end|>"
+    probe_wrappers:
+      system:    ["<|im_start|>system\n", "<|im_end|>\n"]
+      user:      ["<|im_start|>user\n", "<|im_end|>\n"]
+      assistant: ["<|im_start|>assistant\n", "<|im_end|>\n"]
+      tool:      ["<|im_start|>user\n<tool_response>\n", "\n</tool_response><|im_end|>\n"]
+
+run_models: [qwen3-0.6b]
+
+probe:
+  n_texts: 24
+  max_text_tokens: 96
+  tokens_per_seq: 32
+  layer_stride: 7
+  batch_size: 4
+
+n_docs: 1
+generation: {batch_size: 8}

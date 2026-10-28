@@ -1,0 +1,13 @@
+torch>=2.6
+transformers>=4.56
+accelerate
+kernels
+datasets
+pandas
+pyarrow
+scikit-learn
+matplotlib
+pyyaml
+tqdm
+tabulate
+pytest
