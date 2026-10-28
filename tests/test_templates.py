@@ -6,7 +6,13 @@ from transformers import AutoTokenizer
 
 from rpg.config import load_config, model_cfg
 from rpg.dataset import build_examples, injection_text, load_docs
-from rpg.templating import FETCH_TOOL, build_messages, char_spans_to_token_idx, locate_spans, render
+from rpg.templating import (
+    FETCH_TOOL,
+    build_messages,
+    char_spans_to_token_idx,
+    locate_spans,
+    render,
+)
 
 CFG = load_config("configs/base.yaml")
 MARK = "Beginners BBQ Class Taking Place in Missoula!"
@@ -29,13 +35,21 @@ def test_wrappers_match_real_template(name):
         "tool": [{"role": "user", "content": "go"},
                  {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "fetch_url", "arguments": {"url": "u"}}}]},
                  {"role": "tool", "name": "fetch_url", "content": MARK}],
+        # Qwen3 reads `reasoning_content`, gpt-oss reads `thinking`.
+        "thinking": [{"role": "user", "content": "hi"},
+                     {"role": "assistant", "content": "ok", "reasoning_content": MARK, "thinking": MARK}],
     }
     for role, msgs in convs.items():
+        if role not in mcfg["probe_wrappers"]:
+            continue
         if role == "system" and "gpt-oss" in name:
             continue  # gpt-oss maps a system message to the developer role; probe uses the raw system role
         real = tok.apply_chat_template(msgs, tools=[FETCH_TOOL] if role == "tool" else None, tokenize=False, **kw)
         pre, suf = mcfg["probe_wrappers"][role]
         content = json.dumps(MARK)[1:-1] if role in mcfg.get("json_escape_roles", []) else MARK
+        if role == "system":  # Llama prepends fixed date lines to every system message
+            assert pre in real and (content + suf).strip() in real, f"{name}/system wrapper not found in:\n{real}"
+            continue
         assert (pre + content + suf).strip() in real, f"{name}/{role} wrapper not found in:\n{real}"
 
 

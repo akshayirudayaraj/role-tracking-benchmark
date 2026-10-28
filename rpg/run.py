@@ -10,12 +10,13 @@ import json
 
 import torch
 
-from rpg import analyze, generate, measure, probe, prompts, score
+from rpg import analyze, generate, measure, probe, prompts, report, score
 from rpg import model as M
 from rpg.config import load_config, model_cfg, out_dir
 from rpg.dataset import load_docs
 
 STAGES = ["probe", "measure", "generate", "score", "analyze"]
+MODEL_STAGES = {"probe", "measure", "generate", "score"}
 
 
 def main():
@@ -30,13 +31,14 @@ def main():
     torch.manual_seed(cfg["seed"])
 
     for name in names:
-        if not set(stages) & {"probe", "measure", "generate", "score"}:
+        if not set(stages) & MODEL_STAGES:
             break
         mcfg, out = model_cfg(cfg, name), out_dir(cfg, name)
         print(f"=== {name} -> {out}")
         model, tok = M.load(mcfg)
-        rows = prompts.build(cfg, mcfg, tok, out)
-        print(f"{len(rows)} prompts; median length {sorted(len(r['input_ids']) for r in rows)[len(rows) // 2]} tokens")
+        if set(stages) & {"measure", "generate", "score"}:
+            rows = prompts.build(cfg, mcfg, tok, out)
+            print(f"{len(rows)} prompts; median length {sorted(len(r['input_ids']) for r in rows)[len(rows) // 2]} tokens")
         if "probe" in stages or "measure" in stages:
             bundle = probe.run(cfg, mcfg, model, tok, out)
         if "measure" in stages:
@@ -53,6 +55,8 @@ def main():
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    if "probe" in stages:
+        report.probes(cfg, names)
     if "analyze" in stages:
         analyze.run(cfg, names)
 

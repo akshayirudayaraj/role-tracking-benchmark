@@ -10,11 +10,13 @@ cd "$(dirname "$0")/.."
 DEST=${DEST:-/workspace/hermes-role-confusion}
 cmd=${1:?push|setup|run|log|pull}; shift || true
 case $cmd in
-  push)  rsync -az --exclude .venv --exclude external --exclude runs --exclude .git -e "${SSH% *}" ./ "${SSH##* }:$DEST/" ;;
+  # -rlt, not -a: RunPod's /workspace network volume rejects chown.
+  push)  rsync -rltz --exclude .venv --exclude external --exclude runs --exclude .git --exclude '__pycache__' \
+               --exclude '.*_cache' --exclude '*.log' -e "${SSH% *}" ./ "${SSH##* }:$DEST/" ;;
   setup) $SSH "cd $DEST && bash scripts/setup.sh" ;;
   run)   cfg=${1:-pilot}; shift || true
          $SSH "cd $DEST && source .venv/bin/activate && export HF_HOME=/workspace/hf && \
-               nohup python -m rpg.run configs/$cfg.yaml $* > run_$cfg.log 2>&1 & echo started" ;;
+               nohup python -m rpg.run configs/$cfg.yaml $* > run_$cfg.log 2>&1 < /dev/null & echo started" ;;
   log)   $SSH "tail -n 30 $DEST/run_${1:-pilot}.log" ;;
-  pull)  rsync -az --exclude 'injection_acts_*.pt' -e "${SSH% *}" "${SSH##* }:$DEST/runs/" runs/ ;;
+  pull)  rsync -rltz --exclude 'injection_acts_*.pt' -e "${SSH% *}" "${SSH##* }:$DEST/runs/" runs/ ;;
 esac

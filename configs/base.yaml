@@ -22,6 +22,7 @@ models:
       user:      ["<|start|>user<|message|>", "<|end|>"]
       assistant: ["<|start|>assistant<|channel|>final<|message|>", "<|end|>"]
       tool:      ["<|start|>functions.fetch_url to=assistant<|channel|>commentary<|message|>\"", "\"<|end|>"]
+      thinking:  ["<|start|>assistant<|channel|>analysis<|message|>", "<|end|>"]
     json_escape_roles: [tool]
 
   qwen3-8b:
@@ -35,20 +36,9 @@ models:
       user:      ["<|im_start|>user\n", "<|im_end|>\n"]
       assistant: ["<|im_start|>assistant\n", "<|im_end|>\n"]
       tool:      ["<|im_start|>user\n<tool_response>\n", "\n</tool_response><|im_end|>\n"]
+      thinking:  ["<|im_start|>assistant\n<think>\n", "\n</think>\n\n"]
 
-  granite-3.3-8b:
-    hf_id: ibm-granite/granite-3.3-8b-instruct
-    dtype: bfloat16
-    template_kwargs: {}
-    max_new_tokens: 400
-    native_user_wrapper: "<|start_of_role|>user<|end_of_role|>{text}<|end_of_text|>"
-    probe_wrappers:
-      system:    ["<|start_of_role|>system<|end_of_role|>", "<|end_of_text|>\n"]
-      user:      ["<|start_of_role|>user<|end_of_role|>", "<|end_of_text|>\n"]
-      assistant: ["<|start_of_role|>assistant<|end_of_role|>", "<|end_of_text|>\n"]
-      tool:      ["<|start_of_role|>tool<|end_of_role|>", "<|end_of_text|>\n"]
-
-  # Gated: request access at hf.co/meta-llama/Llama-3.1-8B-Instruct, then add to run_models.
+  # Gated: request access at hf.co/meta-llama/Llama-3.1-8B-Instruct. No thinking block.
   llama-3.1-8b:
     hf_id: meta-llama/Llama-3.1-8B-Instruct
     dtype: bfloat16
@@ -59,20 +49,22 @@ models:
       system:    ["<|start_header_id|>system<|end_header_id|>\n\n", "<|eot_id|>"]
       user:      ["<|start_header_id|>user<|end_header_id|>\n\n", "<|eot_id|>"]
       assistant: ["<|start_header_id|>assistant<|end_header_id|>\n\n", "<|eot_id|>"]
-      tool:      ["<|start_header_id|>ipython<|end_header_id|>\n\n", "<|eot_id|>"]
+      tool:      ["<|start_header_id|>ipython<|end_header_id|>\n\n\"", "\"<|eot_id|>"]
+    json_escape_roles: [tool]
+    probe_roles: [system, user, assistant, tool]
 
-run_models: [gpt-oss-20b, qwen3-8b, granite-3.3-8b]
+run_models: [qwen3-8b, llama-3.1-8b, gpt-oss-20b]
 
 # ---------------------------------------------------------------- probe
 probe:
-  roles: [system, user, assistant, tool]
+  roles: [system, user, assistant, tool, thinking]   # a model may narrow this with `probe_roles`
   source: {dataset: allenai/c4, config: en, split: validation}
-  n_texts: 150              # neutral texts; each is wrapped in every role
+  n_texts: 600              # neutral texts; each is wrapped in every role
   max_text_tokens: 256
-  tokens_per_seq: 128       # content tokens sampled per sequence for training (memory)
-  layer_stride: 4           # probe every k-th layer
+  tokens_per_seq: 32        # content tokens sampled per sequence (tokens within a text are correlated)
+  layer_stride: 1           # probe every layer (paper: every 4th)
   eval_layer: mid           # "mid" = middle probed layer (paper default) or an int
-  C_grid: [1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1]
+  C_grid: [1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3, 1.0e-2]
   prefix: mixed             # none = paper default; mixed = half the texts get the real system/tools header
   batch_size: 8
 

@@ -14,6 +14,7 @@ models:
       user:      ["<|im_start|>user\n", "<|im_end|>\n"]
       assistant: ["<|im_start|>assistant\n", "<|im_end|>\n"]
       tool:      ["<|im_start|>user\n<tool_response>\n", "\n</tool_response><|im_end|>\n"]
+      thinking:  ["<|im_start|>assistant\n<think>\n", "\n</think>\n\n"]
 
 run_models: [qwen3-0.6b]
 

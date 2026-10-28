@@ -10,11 +10,11 @@ def final_answer(mcfg: dict, raw: str, clean: str) -> tuple[str, bool]:
     """Return (final user-visible answer, finished?). `raw` keeps special tokens, `clean` drops them.
     Harmony (gpt-oss) answers live in the final channel; others just lose any <think> block."""
     if mcfg.get("reasoning_format") == "harmony":
-        m = re.search(r"<\|channel\|>final<\|message\|>(.*?)(?:<\|return\|>|<\|end\|>|$)", raw, re.S)
+        m = re.search(r"<\|channel\|>final<\|message\|>(.*?)(?:<\|return\|>|<\|end\|>|$)", raw, re.DOTALL)
         if not m:
             return "", False
         return m.group(1).strip(), True
-    return re.sub(r"<think>.*?</think>", "", clean, flags=re.S).strip(), True
+    return re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip(), True
 
 
 @torch.no_grad()

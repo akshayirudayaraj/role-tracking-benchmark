@@ -3,6 +3,8 @@
 Activations follow the paper's repo (utils/probes.py): the output of each decoder layer's
 `post_attention_layernorm`, i.e. the normalized residual stream entering the MLP.
 """
+import os
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -10,6 +12,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 def device() -> str:
     if torch.cuda.is_available():
         return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
     return "cpu"
 
 
@@ -17,9 +21,13 @@ def load(mcfg: dict):
     tok = AutoTokenizer.from_pretrained(mcfg["hf_id"], padding_side="left")
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
+    dev = device()
+    if dev != "cuda":
+        # transformers' threaded weight loader can hang on macOS; load sequentially there.
+        os.environ.setdefault("HF_DEACTIVATE_ASYNC_LOAD", "1")
     model = AutoModelForCausalLM.from_pretrained(
         mcfg["hf_id"], dtype=getattr(torch, mcfg.get("dtype", "bfloat16")),
-        device_map=device(), **mcfg.get("load_kwargs", {}),
+        device_map=dev, **mcfg.get("load_kwargs", {}),
     ).eval()
     return model, tok
 

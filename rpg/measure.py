@@ -12,7 +12,7 @@ def run(cfg: dict, model, tok, rows: list[dict], bundle: dict, out) -> pd.DataFr
     if path.exists():
         return pd.read_parquet(path)
     layers = bundle["layers"]
-    roles = cfg["probe"]["roles"]
+    roles = bundle["roles"]
     recs, cached_acts = [], {}
     bs = cfg["probe"]["batch_size"]
     for i in tqdm(range(0, len(rows), bs), desc="roleness"):
