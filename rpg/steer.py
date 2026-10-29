@@ -49,32 +49,45 @@ def random_direction(dim: int, seed: int) -> torch.Tensor:
 
 
 @contextmanager
-def steering(model, layer: int, u: torch.Tensor | None, alpha: float, chunk: list[dict], offsets: list[int]):
-    """Add alpha * ||h_t|| * u to the residual stream entering `layer` at each row's instruction tokens.
-    Only the prefill pass is changed (later passes see one new token at a time)."""
-    if u is None or alpha == 0:
+def steering(model, dirs: dict[int, torch.Tensor] | None, alpha: float, chunk: list[dict], offsets: list[int]):
+    """For each (layer, u) in `dirs`, add alpha * ||h_t|| * u to the residual stream entering that layer
+    at each row's instruction tokens. Only the prefill pass is changed (later passes see one new token)."""
+    if not dirs or alpha == 0:
         yield
         return
     pos = [[o + i for i in r["span_tokens"]["injection_core"]] for r, o in zip(chunk, offsets)]
 
-    def pre_hook(_mod, args, kwargs):
-        h = kwargs["hidden_states"] if "hidden_states" in kwargs else args[0]
-        if h.shape[1] == 1:
-            return None
-        h = h.clone()
-        d = u.to(h.device, h.dtype)
-        for b, ps in enumerate(pos):
-            if b < h.shape[0]:
-                h[b, ps] += alpha * h[b, ps].float().norm(dim=-1, keepdim=True).to(h.dtype) * d
-        if "hidden_states" in kwargs:
-            return args, {**kwargs, "hidden_states": h}
-        return (h, *args[1:]), kwargs
+    def make_hook(u):
+        def pre_hook(_mod, args, kwargs):
+            h = kwargs["hidden_states"] if "hidden_states" in kwargs else args[0]
+            if h.shape[1] == 1:
+                return None
+            h = h.clone()
+            d = u.to(h.device, h.dtype)
+            for b, ps in enumerate(pos):
+                if b < h.shape[0]:
+                    h[b, ps] += alpha * h[b, ps].float().norm(dim=-1, keepdim=True).to(h.dtype) * d
+            if "hidden_states" in kwargs:
+                return args, {**kwargs, "hidden_states": h}
+            return (h, *args[1:]), kwargs
+        return pre_hook
 
-    handle = M.decoder_layers(model)[layer].register_forward_pre_hook(pre_hook, with_kwargs=True)
+    handles = [M.decoder_layers(model)[li].register_forward_pre_hook(make_hook(u), with_kwargs=True)
+               for li, u in dirs.items()]
     try:
         yield
     finally:
-        handle.remove()
+        for h in handles:
+            h.remove()
+
+
+def steer_layers(cfg: dict, bundle: dict) -> list[int]:
+    """`steer.layers`: "eval" = the eval layer only; "eval_to_last" = every probed layer from it on, each
+    steered along its own probe's direction (so later layers cannot simply recompute the role)."""
+    L = bundle["eval_layer"]
+    if cfg["steer"].get("layers", "eval") == "eval":
+        return [L]
+    return [li for li in bundle["layers"] if li >= L]
 
 
 def base_rows(cfg: dict, mcfg: dict, tok) -> dict[str, list[dict]]:
@@ -95,14 +108,14 @@ def base_rows(cfg: dict, mcfg: dict, tok) -> dict[str, list[dict]]:
 
 
 @torch.no_grad()
-def userness(model, tok, rows: list[dict], bundle: dict, layers: list[int], u, alpha: float, bs: int) -> dict[int, list[float]]:
+def userness(model, tok, rows: list[dict], bundle: dict, layers: list[int], dirs, alpha: float, bs: int) -> dict[int, list[float]]:
     """Per-row mean P(user) on the instruction tokens at each of `layers`, under a steer."""
     u_ix = bundle["roles"].index("user")
     out = {li: [] for li in layers}
     for i in range(0, len(rows), bs):
         chunk = rows[i:i + bs]
         _, _, offsets = left_pad(tok, [r["input_ids"] for r in chunk], model.device)
-        with steering(model, bundle["eval_layer"], u, alpha, chunk, offsets):
+        with steering(model, dirs, alpha, chunk, offsets):
             got = M.capture(model, tok, [r["input_ids"] for r in chunk], layers,
                             [r["span_tokens"]["injection_core"] for r in chunk])
         for li in layers:
@@ -110,13 +123,12 @@ def userness(model, tok, rows: list[dict], bundle: dict, layers: list[int], u, a
     return out
 
 
-def calibrate(model, tok, rows, bundle, u, target: float, increasing: bool, sc: dict, bs: int) -> float:
-    """Bisect alpha in [0, max_alpha] so that the mean eval-layer Userness of `rows` reaches `target`."""
-    L = bundle["eval_layer"]
+def calibrate(model, tok, rows, bundle, dirs, read: int, target: float, increasing: bool, sc: dict, bs: int) -> float:
+    """Bisect alpha in [0, max_alpha] so that the mean Userness of `rows` at layer `read` reaches `target`."""
     lo, hi = 0.0, sc["max_alpha"]
     for _ in range(sc["bisect_iters"]):
         mid = (lo + hi) / 2
-        m = sum(userness(model, tok, rows, bundle, [L], u, mid, bs)[L]) / len(rows)
+        m = sum(userness(model, tok, rows, bundle, [read], dirs, mid, bs)[read]) / len(rows)
         if (m < target) == increasing:
             lo = mid
         else:
@@ -133,19 +145,24 @@ def run(cfg: dict, mcfg: dict, model, tok, bundle: dict, out: Path) -> list[dict
     if path.exists():
         return [json.loads(line) for line in path.read_text().splitlines()]
     sc, L, bs = cfg["steer"], bundle["eval_layer"], cfg["probe"]["batch_size"]
-    read = sorted({L, max(bundle["layers"])})
+    last = max(bundle["layers"])
+    read = sorted({L, last})
+    # targets are read where the steer must hold: the eval layer, or the last layer when steering many
+    tl = L if sc.get("layers", "eval") == "eval" else last
     gen_path = out / "steer_generations.jsonl"
     rows = base_rows(cfg, mcfg, tok)
-    dirs = {"user": role_direction(bundle, model, L, "user", "tool"),
-            "tool": role_direction(bundle, model, L, "tool", "user"),
-            sc["other_role"]: role_direction(bundle, model, L, sc["other_role"], "tool"),
-            "random": random_direction(bundle["probes"][L]["W"].shape[0], sc["seed"])}
+    layers = steer_layers(cfg, bundle)
+    dim = bundle["probes"][L]["W"].shape[0]
+    dirs = {"user": {li: role_direction(bundle, model, li, "user", "tool") for li in layers},
+            "tool": {li: role_direction(bundle, model, li, "tool", "user") for li in layers},
+            sc["other_role"]: {li: role_direction(bundle, model, li, sc["other_role"], "tool") for li in layers},
+            "random": {li: random_direction(dim, sc["seed"] + li) for li in layers}}
 
     def run_condition(test: str, cond: str, placement: str, direction: str | None, alpha: float, frac: float | None):
         rs = [{**r, "key": f"{r['ex_id']}|{test}|{cond}"} for r in rows[placement]]
         u = dirs.get(direction) if direction else None
         gens = generate(cfg, mcfg, model, tok, rs, gen_path, key="key", desc=f"{test} {cond}",
-                        hook=lambda chunk, offsets: steering(model, L, u, alpha, chunk, offsets))
+                        hook=lambda chunk, offsets: steering(model, u, alpha, chunk, offsets))
         un = userness(model, tok, rs, bundle, read, u, alpha, bs)
         docs = {d["doc_id"]: d for d in load_docs(cfg, sc["n_docs"])}
         recs = []
@@ -153,6 +170,7 @@ def run(cfg: dict, mcfg: dict, model, tok, bundle: dict, out: Path) -> list[dict
             ans = gens[r["key"]]["answer"]
             recs.append({"key": r["key"], "test": test, "cond": cond, "placement": placement, "direction": direction,
                          "alpha": alpha, "frac": frac, "doc_id": r["doc_id"], "payload": r["payload"], "eval_layer": L,
+                         "steer_layers": f"{layers[0]}-{layers[-1]}", "target_layer": tl,
                          **{f"userness_L{li}": un[li][i] for li in read},
                          "obeyed": check(cfg["payloads"][r["payload"]]["check"], ans),
                          "task_done": task_done(ans, docs[r["doc_id"]]["text"]), "finished": gens[r["key"]]["finished"]})
@@ -161,9 +179,9 @@ def run(cfg: dict, mcfg: dict, model, tok, bundle: dict, out: Path) -> list[dict
     # Step A: precondition (no steer)
     recs = run_condition("A", "user", "user", None, 0.0, None) + run_condition("A", "tool", "tool", None, 0.0, None)
     rate = {pl: sum(r["obeyed"] for r in recs if r["cond"] == pl) / len(rows[pl]) for pl in ("user", "tool")}
-    target = {pl: sum(r[f"userness_L{L}"] for r in recs if r["cond"] == pl) / len(rows[pl]) for pl in ("user", "tool")}
+    target = {pl: sum(r[f"userness_L{tl}"] for r in recs if r["cond"] == pl) / len(rows[pl]) for pl in ("user", "tool")}
     summary = {"user_rate": rate["user"], "tool_rate": rate["tool"], "userness_user": target["user"],
-               "userness_tool": target["tool"], "min_gap": sc["min_gap"],
+               "userness_tool": target["tool"], "target_layer": tl, "steer_layers": layers, "min_gap": sc["min_gap"],
                "precondition_met": abs(rate["user"] - rate["tool"]) >= sc["min_gap"]}
     print(f"Step 3 precondition: user rate {rate['user']:.2f}, tool rate {rate['tool']:.2f} -> "
           f"{'run tests' if summary['precondition_met'] else 'skip tests (role does not drive behavior)'}")
@@ -173,11 +191,11 @@ def run(cfg: dict, mcfg: dict, model, tok, bundle: dict, out: Path) -> list[dict
         alphas = {}
         for f in sc["fractions"]:
             # Test 1: tool result -> user-message Userness
-            a = calibrate(model, tok, rows["tool"], bundle, dirs["user"], target["tool"] + f * gap, True, sc, bs)
+            a = calibrate(model, tok, rows["tool"], bundle, dirs["user"], tl, target["tool"] + f * gap, True, sc, bs)
             alphas[f] = a
             recs += run_condition("1", f"toward_user_{f}", "tool", "user", a, f)
             # Test 2: user message -> tool-result Userness
-            a2 = calibrate(model, tok, rows["user"], bundle, dirs["tool"], target["user"] - f * gap, False, sc, bs)
+            a2 = calibrate(model, tok, rows["user"], bundle, dirs["tool"], tl, target["user"] - f * gap, False, sc, bs)
             recs += run_condition("2", f"toward_tool_{f}", "user", "tool", a2, f)
         if sc.get("specificity", True):
             # Test 3: same strengths, other directions
