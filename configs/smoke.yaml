@@ -28,5 +28,5 @@ probe:
 n_docs: 1
 gen_docs: 1
 subset: {payloads: [end_word, french], styles: [naive, context_ignoring, paper000, paper012, paper060, paper100]}
-steer: {n_docs: 2, alphas: [0.0, 0.4], reverse_alphas: [0.4], random_alphas: [0.4]}
+steer: {n_docs: 2, min_gap: 0.0, fractions: [0.5, 1.0], bisect_iters: 4}
 generation: {batch_size: 8, do_sample: false}

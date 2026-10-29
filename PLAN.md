@@ -72,39 +72,57 @@ Measure these values for each model:
 - **Score**: the style effect divided by the tag effect. A high score shows that the model tracks roles from style more than from role tags.
 - **Obey rate**: the percentage of answers that obey the instruction. Also, a check that the model did the summary task.
 
-## Step 3: Steer the Userness (the main experiment)
+## Step 3: Steer the Userness (a test of the meter)
 
-This step has two functions:
+This step finds if a change in the Userness has the same effect as a real change of the sender.
+We steer only the tokens of a plain instruction. The words and the role tags do not change.
 
-- It shows if the meter reads a signal that the model uses. This test does not assume that the model is confused. If a steer in the meter direction changes the obey rate, the model uses the signal.
-- It finds if the Userness controls the behavior of the model, also when the role tags show "tool".
+**Step A (necessary condition, no steer).**
 
-A correlation between Userness and obey rate is not sufficient. We must change the Userness and look at the result.
+1. Put the instruction in the user message. Record the obey rate. This is the "user rate".
+2. Put the same instruction in a tool result. Record the obey rate. This is the "tool rate".
+3. If the two rates are almost the same, the role does not control the behavior of this model. Then the tests below cannot give a result. Report this and stop.
 
-1. Put a plain instruction in a tool result. The role tags show "tool".
-2. Steer the internal values on the words of the instruction in the user direction of the meter. Do not change the words or the role tags.
-3. Use 4 strengths. Each strength gives a known Userness, for example 0.3, 0.5, 0.7, and 0.9.
-4. Record the obey rate at each strength.
-5. Do the opposite test: steer a user-style instruction in the tool direction. Record the obey rate.
+**Test 1 (sufficient).**
 
-Compare the results with two reference values:
+1. Put the instruction in a tool result.
+2. The target is the Userness of the same instruction in the user message.
+3. Steer the instruction in the user direction until the meter reads the target. Use 4 strengths: 25%, 50%, 75%, and 100% of the distance to the target.
+4. Pass: the obey rate moves to the user rate.
 
-- The obey rate when the user really sends the instruction (the maximum).
-- The obey rate of the plain instruction in the tool result with no steer (the minimum).
+**Test 2 (necessary).**
 
-If the obey rate increases with the Userness, the model obeys the role that it perceives, and not the role tags.
+1. Put the instruction in the user message.
+2. Steer in the tool direction until the meter reads the Userness of the instruction in a tool result.
+3. Pass: the obey rate decreases to the tool rate.
 
-Do these control tests:
+**Test 3 (specific).**
 
-- Steer in a random direction with the same strength. The obey rate must not change.
-- Make sure that the model still does the summary task. If the summary fails, the steer damaged the model.
+1. Do Test 1 again with the same strengths in a random direction.
+2. Do Test 1 again with the direction of a different role (assistant).
+3. Pass: the random direction has no effect, and the assistant direction does not have the effect of the user direction.
 
-If the steer does not change the obey rate, we cannot know which of these two conditions is true:
+If all directions increase the obey rate, the meter reads how much the model notices the text, and not the role.
+Test 3 doubles the generation of Test 1. If time is not sufficient, we remove Test 3 first.
 
-- The meter reads a signal that the model does not use.
-- The role that the model perceives does not control its obedience.
+**Test 4 (consistent).**
 
-We will write this limit in RESULTS.md.
+1. Make one plot of the Userness against the obey rate.
+2. Put the points from Step 2 (the style wrappers) and the points from Test 1 (each strength) on the plot.
+3. Pass: the two sets of points are on the same curve.
+
+Also, read the meter at the last layer after the steer, to see if the change continues through the model.
+For each condition, make sure that the model still does the summary task. If the summary fails, the steer damaged the model.
+
+**Interpretation.** If all the tests pass:
+
+- A change in the meter signal has the same effect as a real change of the sender (Test 1).
+- The model needs the signal (Test 2).
+- The signal is specific to the user role (Test 3).
+- A change of Userness from style and a change from the steer have the same effect (Test 4).
+
+This does not prove that the meter is fully correct, because we cannot know the real role that the model perceives.
+If a test fails, or if the results show no effect, the meter is not a good indicator of the role that controls the behavior. We will write this clearly in RESULTS.md.
 
 ## Code standard
 

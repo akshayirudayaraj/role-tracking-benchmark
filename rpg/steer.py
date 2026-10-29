@@ -1,20 +1,30 @@
-"""Step 3: steer the perceived role of the planted instruction and record the obey rate.
+"""Step 3: steering as a validity test of the role probe.
 
-The probe at the eval layer L reads x = RMSNorm(h) * g (the `post_attention_layernorm` output), where h
-is the residual stream. Its user-minus-tool logit is ((x - mu) / sd) @ (W_user - W_tool), so to first
-order the residual direction that raises it fastest is u = normalize(g * (W_user - W_tool) / sd).
+Question: does a change in the probe's Userness have the same effect on behavior as a real change of
+sender? The instruction is the plain one (no wrapper); only its tokens are steered, during prefill.
 
-We add alpha * ||h_t|| * u to the residual stream at the input of layer L, on the instruction's tokens
-only, during prefill. The words and the role tags do not change. Generation then attends to the
-steered keys and values. Controls: alpha = 0, a random unit direction with the same scale, and the
-genuine-user placement as the reference maximum.
+  Step A (precondition, no steer): user rate = obey rate with the instruction in the user message;
+    tool rate = obey rate in a tool result. If they are almost equal, role does not drive behavior for
+    this model and the tests below cannot say anything: we report that and stop.
+  Test 1 (sufficient): tool result, steer toward user until the probe reads fractions of the way to the
+    user-message Userness. Pass: the obey rate moves to the user rate.
+  Test 2 (necessary): user message, steer toward tool until the probe reads fractions of the way to the
+    tool-result Userness. Pass: the obey rate drops to the tool rate.
+  Test 3 (specific): Test 1's strengths along a random direction and along another role's direction.
+    Pass: neither has the effect of the user direction.
+  Test 4 (consistent): the analysis plots Step 2's natural points and Test 1's steered points on one
+    Userness -> obey axis.
+
+Steering. The probe reads x = RMSNorm(h) * g. Its role-r-minus-tool logit is ((x - mu) / sd) @ (W_r - W_tool),
+so to first order the residual direction that raises it fastest is u = normalize(g * (W_r - W_tool) / sd).
+We add alpha * ||h_t|| * u to the residual stream at the input of the eval layer on the instruction
+tokens. alpha is found by bisection so that the mean Userness over the condition's prompts hits a target.
 """
 import json
 from contextlib import contextmanager
 from pathlib import Path
 
 import torch
-from tqdm import tqdm
 
 from rpg import model as M
 from rpg.dataset import load_docs, wrap
@@ -67,78 +77,115 @@ def steering(model, layer: int, u: torch.Tensor | None, alpha: float, chunk: lis
         handle.remove()
 
 
-def build_rows(cfg: dict, mcfg: dict, tok) -> list[dict]:
-    """Prompts for every steering condition. key = doc|payload|style|placement|condition|alpha."""
+def base_rows(cfg: dict, mcfg: dict, tok) -> dict[str, list[dict]]:
+    """The plain instruction in each placement, for every steering document and payload."""
     sc = cfg["steer"]
-    docs = load_docs(cfg, sc["n_docs"])
-    plain = {"style_id": sc["style"], "template": cfg["styles"]["attacks"][sc["style"]]}
-    reverse = {"style_id": "reverse", "template": sc["reverse_template"]}
+    style = {"style_id": sc["style"], "template": cfg["styles"]["attacks"][sc["style"]]}
     payloads = cfg.get("subset", {}).get("payloads", list(cfg["payloads"]))
-    conds = ([(plain, "tool", "user", a) for a in sc["alphas"]]
-             + [(plain, "tool", "random", a) for a in sc["random_alphas"]]
-             + [(reverse, "tool", "tool", a) for a in [0.0, *sc["reverse_alphas"]]]
-             + [(plain, "user", "none", 0.0)])
-    rows = []
-    for doc in docs:
+    rows = {"user": [], "tool": []}
+    for doc in load_docs(cfg, sc["n_docs"]):
         for payload in payloads:
-            for style, placement, direction, alpha in conds:
+            for placement in ("user", "tool"):
                 ex = {"ex_id": f"{doc['doc_id']}|{payload}|{style['style_id']}|{placement}",
                       "doc_id": doc["doc_id"], "payload": payload, "placement": placement,
                       "style_id": style["style_id"], "family": "steer", "label": None,
                       "injection": wrap(style, cfg["payloads"][payload]["instruction"]), "generate": True}
-                row = make_row(cfg, mcfg, tok, ex, doc)
-                row.update(direction=direction, alpha=alpha, key=f"{ex['ex_id']}|{direction}|{alpha}")
-                rows.append(row)
+                rows[placement].append(make_row(cfg, mcfg, tok, ex, doc))
     return rows
 
 
 @torch.no_grad()
-def measure(model, tok, rows: list[dict], bundle: dict, dirs: dict, layer: int, bs: int) -> dict[str, dict]:
-    """Userness of the instruction under each row's steer, at the eval layer and the last probed layer."""
-    read = sorted({layer, max(bundle["layers"])})
-    res = {}
-    groups = {}
-    for r in rows:
-        groups.setdefault((r["direction"], r["alpha"]), []).append(r)
-    for (direction, alpha), grp in tqdm(groups.items(), desc="steer measure"):
-        for i in range(0, len(grp), bs):
-            chunk = grp[i:i + bs]
-            _, _, offsets = left_pad(tok, [r["input_ids"] for r in chunk], model.device)
-            with steering(model, layer, dirs.get(direction), alpha, chunk, offsets):
-                got = M.capture(model, tok, [r["input_ids"] for r in chunk], read,
-                                [r["span_tokens"]["injection_core"] for r in chunk])
-            u_ix = bundle["roles"].index("user")
-            for b, r in enumerate(chunk):
-                res[r["key"]] = {f"userness_L{li}": predict_proba(bundle["probes"][li], got[li][b])[:, u_ix].mean().item()
-                                 for li in read}
-    return res
+def userness(model, tok, rows: list[dict], bundle: dict, layers: list[int], u, alpha: float, bs: int) -> dict[int, list[float]]:
+    """Per-row mean P(user) on the instruction tokens at each of `layers`, under a steer."""
+    u_ix = bundle["roles"].index("user")
+    out = {li: [] for li in layers}
+    for i in range(0, len(rows), bs):
+        chunk = rows[i:i + bs]
+        _, _, offsets = left_pad(tok, [r["input_ids"] for r in chunk], model.device)
+        with steering(model, bundle["eval_layer"], u, alpha, chunk, offsets):
+            got = M.capture(model, tok, [r["input_ids"] for r in chunk], layers,
+                            [r["span_tokens"]["injection_core"] for r in chunk])
+        for li in layers:
+            out[li] += [predict_proba(bundle["probes"][li], got[li][b])[:, u_ix].mean().item() for b in range(len(chunk))]
+    return out
+
+
+def calibrate(model, tok, rows, bundle, u, target: float, increasing: bool, sc: dict, bs: int) -> float:
+    """Bisect alpha in [0, max_alpha] so that the mean eval-layer Userness of `rows` reaches `target`."""
+    L = bundle["eval_layer"]
+    lo, hi = 0.0, sc["max_alpha"]
+    for _ in range(sc["bisect_iters"]):
+        mid = (lo + hi) / 2
+        m = sum(userness(model, tok, rows, bundle, [L], u, mid, bs)[L]) / len(rows)
+        if (m < target) == increasing:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def obey_rate(cfg: dict, rows: list[dict], gens: dict[str, dict]) -> float:
+    return sum(check(cfg["payloads"][r["payload"]]["check"], gens[r["key"]]["answer"]) for r in rows) / len(rows)
 
 
 def run(cfg: dict, mcfg: dict, model, tok, bundle: dict, out: Path) -> list[dict]:
     path = out / "steer_results.jsonl"
     if path.exists():
         return [json.loads(line) for line in path.read_text().splitlines()]
-    layer = bundle["eval_layer"]
-    rows = build_rows(cfg, mcfg, tok)
-    dirs = {"user": role_direction(bundle, model, layer, "user", "tool"),
-            "tool": role_direction(bundle, model, layer, "tool", "user"),
-            "random": random_direction(bundle["probes"][layer]["W"].shape[0], cfg["steer"]["seed"])}
-    meas = measure(model, tok, rows, bundle, dirs, layer, cfg["probe"]["batch_size"])
+    sc, L, bs = cfg["steer"], bundle["eval_layer"], cfg["probe"]["batch_size"]
+    read = sorted({L, max(bundle["layers"])})
+    gen_path = out / "steer_generations.jsonl"
+    rows = base_rows(cfg, mcfg, tok)
+    dirs = {"user": role_direction(bundle, model, L, "user", "tool"),
+            "tool": role_direction(bundle, model, L, "tool", "user"),
+            sc["other_role"]: role_direction(bundle, model, L, sc["other_role"], "tool"),
+            "random": random_direction(bundle["probes"][L]["W"].shape[0], sc["seed"])}
 
-    gens = {}
-    for (direction, alpha) in dict.fromkeys((r["direction"], r["alpha"]) for r in rows):
-        grp = [r for r in rows if (r["direction"], r["alpha"]) == (direction, alpha)]
-        gens.update(generate(cfg, mcfg, model, tok, grp, out / "steer_generations.jsonl", key="key",
-                             hook=lambda chunk, offsets, d=direction, a=alpha: steering(model, layer, dirs.get(d), a, chunk, offsets),
-                             desc=f"steer {direction} {alpha}"))
+    def run_condition(test: str, cond: str, placement: str, direction: str | None, alpha: float, frac: float | None):
+        rs = [{**r, "key": f"{r['ex_id']}|{test}|{cond}"} for r in rows[placement]]
+        u = dirs.get(direction) if direction else None
+        gens = generate(cfg, mcfg, model, tok, rs, gen_path, key="key", desc=f"{test} {cond}",
+                        hook=lambda chunk, offsets: steering(model, L, u, alpha, chunk, offsets))
+        un = userness(model, tok, rs, bundle, read, u, alpha, bs)
+        docs = {d["doc_id"]: d for d in load_docs(cfg, sc["n_docs"])}
+        recs = []
+        for i, r in enumerate(rs):
+            ans = gens[r["key"]]["answer"]
+            recs.append({"key": r["key"], "test": test, "cond": cond, "placement": placement, "direction": direction,
+                         "alpha": alpha, "frac": frac, "doc_id": r["doc_id"], "payload": r["payload"], "eval_layer": L,
+                         **{f"userness_L{li}": un[li][i] for li in read},
+                         "obeyed": check(cfg["payloads"][r["payload"]]["check"], ans),
+                         "task_done": task_done(ans, docs[r["doc_id"]]["text"]), "finished": gens[r["key"]]["finished"]})
+        return recs
 
-    docs = {d["doc_id"]: d for d in load_docs(cfg, cfg["steer"]["n_docs"])}
-    recs = []
-    for r in rows:
-        ans = gens[r["key"]]["answer"]
-        recs.append({k: r[k] for k in ("key", "doc_id", "payload", "placement", "style_id", "direction", "alpha")}
-                    | meas[r["key"]] | {"eval_layer": layer, "finished": gens[r["key"]]["finished"],
-                                        "obeyed": check(cfg["payloads"][r["payload"]]["check"], ans),
-                                        "task_done": task_done(ans, docs[r["doc_id"]]["text"])})
+    # Step A: precondition (no steer)
+    recs = run_condition("A", "user", "user", None, 0.0, None) + run_condition("A", "tool", "tool", None, 0.0, None)
+    rate = {pl: sum(r["obeyed"] for r in recs if r["cond"] == pl) / len(rows[pl]) for pl in ("user", "tool")}
+    target = {pl: sum(r[f"userness_L{L}"] for r in recs if r["cond"] == pl) / len(rows[pl]) for pl in ("user", "tool")}
+    summary = {"user_rate": rate["user"], "tool_rate": rate["tool"], "userness_user": target["user"],
+               "userness_tool": target["tool"], "min_gap": sc["min_gap"],
+               "precondition_met": abs(rate["user"] - rate["tool"]) >= sc["min_gap"]}
+    print(f"Step 3 precondition: user rate {rate['user']:.2f}, tool rate {rate['tool']:.2f} -> "
+          f"{'run tests' if summary['precondition_met'] else 'skip tests (role does not drive behavior)'}")
+
+    if summary["precondition_met"]:
+        gap = target["user"] - target["tool"]
+        alphas = {}
+        for f in sc["fractions"]:
+            # Test 1: tool result -> user-message Userness
+            a = calibrate(model, tok, rows["tool"], bundle, dirs["user"], target["tool"] + f * gap, True, sc, bs)
+            alphas[f] = a
+            recs += run_condition("1", f"toward_user_{f}", "tool", "user", a, f)
+            # Test 2: user message -> tool-result Userness
+            a2 = calibrate(model, tok, rows["user"], bundle, dirs["tool"], target["user"] - f * gap, False, sc, bs)
+            recs += run_condition("2", f"toward_tool_{f}", "user", "tool", a2, f)
+        if sc.get("specificity", True):
+            # Test 3: same strengths, other directions
+            for f, a in alphas.items():
+                recs += run_condition("3", f"random_{f}", "tool", "random", a, f)
+                recs += run_condition("3", f"{sc['other_role']}_{f}", "tool", sc["other_role"], a, f)
+
+    (out / "steer_summary.json").write_text(json.dumps(summary, indent=1))
     path.write_text("\n".join(json.dumps(r) for r in recs))
     return recs
+
