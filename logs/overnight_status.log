@@ -1,0 +1,8 @@
+start Thu Oct 29 04:58:47 UTC 2026
+1 gpt-oss steer exit=0 Thu Oct 29 05:24:13 UTC 2026
+2 llama exit=1 Thu Oct 29 05:25:27 UTC 2026
+restart Thu Oct 29 05:27:59 UTC 2026: qwen, llama, reports (gpt-oss 3-doc rerun dropped for budget)
+3 qwen exit=0 Thu Oct 29 05:48:40 UTC 2026
+2 llama exit=0 Thu Oct 29 06:30:53 UTC 2026
+done Thu Oct 29 06:31:07 UTC 2026
+queue ended Thu Oct 29 06:31:20 UTC 2026; stopping pod in 15 min

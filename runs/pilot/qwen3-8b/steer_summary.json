@@ -1,0 +1,29 @@
+{
+ "user_rate": 1.0,
+ "tool_rate": 0.9722222222222222,
+ "userness_user": 0.747505729397138,
+ "userness_tool": 0.6212377953860495,
+ "target_layer": 35,
+ "steer_layers": [
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+  30,
+  31,
+  32,
+  33,
+  34,
+  35
+ ],
+ "min_gap": 0.15,
+ "precondition_met": false
+}
