@@ -71,7 +71,8 @@ Step 2 does only forward passes. The model does not write answers.
 - **True-role value**: the percentage of the true role. For example, under the tool tag, this is the tool percentage.
 - **Tag effect** for tag T: the true-role value of the plain instruction under tag T, minus the mean of the same percentage under the other tags. A large tag effect is good.
 - **Style effect** for tag T: the true-role value of the plain instruction, minus the 10th percentile of the true-role values across the wrappers. This shows how far the worst wrappers move the role away from the tag. A small style effect is good.
-- **Score** for tag T: the style effect divided by the tag effect. The model score is the mean across the tags. A high score shows that the model tracks roles from style more than from role tags.
+- **Score** for tag T: the style effect divided by the tag effect. A high score shows that the model tracks roles from style more than from role tags.
+- **Model score**: the mean of the per-tag scores. Use only the tags with a tag effect of 0.1 or more. If the tag effect is smaller, the meter does not see the tag, and its score means nothing.
 
 We also report the earlier score for the user tag and the tool tag (the spread of the Userness in the tool result, divided by the change of the Userness between the two tags). The pilot in RESULTS.md uses this score.
 
@@ -199,7 +200,6 @@ Stop the pod after the run. A stopped pod with a 100 GB volume costs a few cents
 
 ## Status
 
-The pilot is complete for Steps 1 and 2 with the user tag and the tool tag only. The results are in RESULTS.md.
-The next run does Step 2 with all the tags.
+Steps 1 and 2 are complete for all the tags. The results are in RESULTS.md.
 Step 3 is not implemented.
 The obey-rate steer of the first plan is removed (see "Why we do not steer").
