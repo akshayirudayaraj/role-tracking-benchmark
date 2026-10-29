@@ -65,7 +65,8 @@ def system_header(mcfg: dict, tok) -> str:
     marker = "\x00MARK\x00"
     s = tok.apply_chat_template([{"role": "user", "content": marker}], tools=[FETCH_TOOL], tokenize=False,
                                 **mcfg.get("template_kwargs", {}))
-    return s[: s.index(mcfg["probe_wrappers"]["user"][0] + marker)]
+    # cut at the user turn's opening tag (Llama puts the tool instructions inside the user turn)
+    return s[: s.rindex(mcfg["probe_wrappers"]["user"][0], 0, s.index(marker))]
 
 
 def extract_training_acts(cfg: dict, model, tok, seqs: list[dict], layers: list[int], roles: list[str]):
