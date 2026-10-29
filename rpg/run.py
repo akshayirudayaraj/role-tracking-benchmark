@@ -36,6 +36,8 @@ def main():
         mcfg, out = model_cfg(cfg, name), out_dir(cfg, name)
         print(f"=== {name} -> {out}")
         model, tok = M.load(mcfg)
+        if not cfg["gen_docs"]:
+            stages = [s for s in stages if s not in ("generate", "score")]  # Step 2 without answers
         if set(stages) & {"measure", "generate", "score"}:
             rows = prompts.build(cfg, mcfg, tok, out)
             print(f"{len(rows)} prompts; median length {sorted(len(r['input_ids']) for r in rows)[len(rows) // 2]} tokens")

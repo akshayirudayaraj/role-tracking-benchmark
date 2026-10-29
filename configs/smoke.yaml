@@ -26,6 +26,6 @@ probe:
   batch_size: 4
 
 n_docs: 1
-gen_docs: 1
+gen_docs: 0
 subset: {payloads: [end_word, french], styles: [naive, context_ignoring, paper000, paper012, paper060, paper100]}
 generation: {batch_size: 8, do_sample: false}

@@ -1,3 +1,6 @@
-# Pilot reported in RESULTS.md.
+# Pilot reported in RESULTS.md: user and tool tags only, with answers (obey rate).
 extends: base.yaml
 out_dir: runs/pilot
+gen_docs: 3
+placements: [user, tool]
+include_clean_baseline: true

@@ -22,22 +22,53 @@ def inject(doc_text: str, inj: str | None) -> str:
     return doc_text if inj is None else f"{doc_text}\n\n{inj}"
 
 
+def request(cfg: dict, ex: dict, doc: dict) -> str:
+    """The user's final request: it points to where the document is (URL, inline, or earlier context)."""
+    t = cfg["task"]
+    if ex["placement"] in ("tool", "clean", "thinking"):
+        return t["user_request_tool"].format(url=doc["url"])
+    if ex["placement"] == "user":
+        return t["user_request_inline"]
+    return t["user_request_context"]
+
+
 def build_messages(cfg: dict, ex: dict, doc: dict, inj: str | None) -> tuple[list[dict], list | None]:
+    """Chat messages that put the document + instruction under the example's tag (`placement`).
+    The thinking tag is not a message: `render_prompt` appends it after the user turn."""
     t = cfg["task"]
     msgs = [{"role": "system", "content": t["system_prompt"]}] if t.get("system_prompt") else []
-    pl = ex["placement"]
+    pl, text = ex["placement"], inject(doc["text"], inj)
     if pl in ("tool", "clean"):
         msgs += [
-            {"role": "user", "content": t["user_request_tool"].format(url=doc["url"])},
+            {"role": "user", "content": request(cfg, ex, doc)},
             {"role": "assistant", "content": "", "tool_calls": [
                 {"type": "function", "function": {"name": "fetch_url", "arguments": {"url": doc["url"]}}}]},
-            {"role": "tool", "name": "fetch_url", "content": inject(doc["text"], inj)},
+            {"role": "tool", "name": "fetch_url", "content": text},
         ]
         return msgs, [FETCH_TOOL]
-    if pl != "user":
-        raise ValueError(f"unknown placement {pl}")
-    body = f"{t['user_request_inline']}\n\n<document>\n{doc['text']}\n</document>\n\n{inj}"
-    return msgs + [{"role": "user", "content": body}], None
+    if pl == "user":
+        body = f"{t['user_request_inline']}\n\n<document>\n{doc['text']}\n</document>\n\n{inj}"
+        return msgs + [{"role": "user", "content": body}], None
+    if pl == "system":
+        return [{"role": "system", "content": text}, {"role": "user", "content": request(cfg, ex, doc)}], None
+    if pl == "assistant":
+        return msgs + [{"role": "user", "content": t["user_request_show"]}, {"role": "assistant", "content": text},
+                       {"role": "user", "content": request(cfg, ex, doc)}], None
+    if pl == "thinking":
+        return msgs + [{"role": "user", "content": request(cfg, ex, doc)}], None
+    raise ValueError(f"unknown placement {pl}")
+
+
+def render_prompt(tokenizer, cfg: dict, mcfg: dict, ex: dict, doc: dict, inj: str | None) -> str:
+    """The full prompt for an example. For the thinking tag, the document + instruction is a closed
+    thinking block after the user turn (the model's own probe wrapper), then the answer prefix."""
+    msgs, tools = build_messages(cfg, ex, doc, inj)
+    if ex["placement"] != "thinking":
+        return render(tokenizer, mcfg, msgs, tools)
+    pre, suf = mcfg["probe_wrappers"]["thinking"]
+    head = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False,
+                                         **mcfg.get("template_kwargs", {}))
+    return head + pre + inject(doc["text"], inj) + suf + mcfg.get("thinking_answer_prefix", "")
 
 
 def render(tokenizer, mcfg: dict, msgs: list[dict], tools: list | None) -> str:
@@ -58,9 +89,7 @@ def _find(prompt: str, text: str, start: int = 0) -> tuple[int, int] | None:
 def locate_spans(prompt: str, cfg: dict, ex: dict, doc: dict, inj: str | None) -> dict:
     """Character spans of interest in the rendered prompt: the user's request, the document body, the
     whole wrapped injection, and `injection_core` (the bare instruction, where Userness is read)."""
-    t = cfg["task"]
-    req = t["user_request_tool"].format(url=doc["url"]) if ex["placement"] in ("tool", "clean") else t["user_request_inline"]
-    spans = {"request": _find(prompt, req), "doc_body": _find(prompt, doc["text"])}
+    spans = {"request": _find(prompt, request(cfg, ex, doc)), "doc_body": _find(prompt, doc["text"])}
     if inj is not None:
         spans["injection"] = _find(prompt, inj, start=spans["doc_body"][0] if spans["doc_body"] else 0)
         instr = cfg["payloads"][ex["payload"]]["instruction"]

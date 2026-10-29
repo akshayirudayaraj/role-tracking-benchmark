@@ -6,12 +6,12 @@ from transformers import AutoTokenizer
 
 from rpg.config import load_config, model_cfg
 from rpg.dataset import build_examples, load_docs
+from rpg.probe import roles_for
 from rpg.templating import (
     FETCH_TOOL,
-    build_messages,
     char_spans_to_token_idx,
     locate_spans,
-    render,
+    render_prompt,
 )
 
 CFG = load_config("configs/base.yaml")
@@ -55,16 +55,38 @@ def test_wrappers_match_real_template(name):
 
 @pytest.mark.parametrize("name", list(CFG["models"]))
 def test_spans_locatable(name):
-    """Every wrapper x payload x placement renders and its spans map to tokens (one document)."""
+    """Every wrapper x payload x tag renders and its spans map to tokens (one document)."""
     mcfg, tok = model_cfg(CFG, name), _tok(name)
     cfg = {**CFG, "n_docs": 1, "gen_docs": 1}
     docs = {d["doc_id"]: d for d in load_docs(cfg)}
+    tags = set(roles_for(CFG, mcfg)) | {"clean"}
     for ex in build_examples(cfg):
+        if ex["placement"] not in tags:
+            continue
         doc = docs[ex["doc_id"]]
         inj = ex["injection"]
-        prompt = render(tok, mcfg, *build_messages(CFG, ex, doc, inj))
+        prompt = render_prompt(tok, CFG, mcfg, ex, doc, inj)
         spans = locate_spans(prompt, CFG, ex, doc, inj)
         _, toks = char_spans_to_token_idx(tok, prompt, spans)
         if inj is not None:
             assert spans["injection"][0] > spans["doc_body"][0]
             assert len(toks["injection_core"]) >= 3
+
+
+@pytest.mark.parametrize("name", list(CFG["models"]))
+def test_instruction_under_its_tag(name):
+    """The plain instruction sits after the opening tag of its own role and before the next tag."""
+    mcfg, tok = model_cfg(CFG, name), _tok(name)
+    doc = load_docs(CFG, 1)[0]
+    instr = CFG["payloads"]["end_word"]["instruction"]
+    for tag in roles_for(CFG, mcfg):
+        if tag == "system" and "gpt-oss" in name:
+            continue  # gpt-oss renders a system message as a developer message
+        ex = {"ex_id": tag, "placement": tag, "payload": "end_word"}
+        prompt = render_prompt(tok, CFG, mcfg, ex, doc, instr)
+        pre = mcfg["probe_wrappers"][tag][0].split("\n")[0].rstrip('"')
+        i = prompt.rindex(instr)
+        assert pre in prompt[:i], f"{name}/{tag}: opening tag missing before the instruction"
+        last_pre = max(prompt.rfind(mcfg["probe_wrappers"][r][0].split("\n")[0].rstrip('"'), 0, i)
+                       for r in roles_for(CFG, mcfg) if r != tag)
+        assert prompt.rfind(pre, 0, i) >= last_pre, f"{name}/{tag}: another tag is closer to the instruction"
