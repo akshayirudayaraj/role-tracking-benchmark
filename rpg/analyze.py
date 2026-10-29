@@ -1,4 +1,4 @@
-"""Step 2 (benchmark score) and Step 3 (steering) tables and plots, per model and combined."""
+"""Step 2 (benchmark score) tables and plots, per model and combined."""
 import json
 from pathlib import Path
 
@@ -96,24 +96,6 @@ def userness_vs_obey(df: pd.DataFrame, n_perm: int = 2000, seed: int = 0) -> dic
     return {"rho": rho, "p_perm": (np.sum(np.abs(null) >= abs(rho)) + 1) / (n_perm + 1), "n_styles": len(per)}
 
 
-def steer_table(out: Path) -> tuple[pd.DataFrame, dict] | None:
-    """Step 3 per condition: measured Userness (eval and last layer), obey rate, summary-task rate."""
-    f, fs = out / "steer_results.jsonl", out / "steer_summary.json"
-    if not (f.exists() and fs.exists()):
-        return None
-    s = pd.read_json(f, lines=True)
-    L = int(s.eval_layer.iloc[0])
-    last = max(int(c.split("_L")[1]) for c in s.columns if c.startswith("userness_L"))
-    rows = []
-    for (test, cond), x in s.groupby(["test", "cond"], sort=False):
-        o = rate(x.obeyed.astype(bool))
-        rows.append({"test": test, "cond": cond, "placement": x.placement.iloc[0], "direction": x.direction.iloc[0],
-                     "frac": x.frac.iloc[0], "alpha": x.alpha.iloc[0], f"userness_L{L}": x[f"userness_L{L}"].mean(),
-                     f"userness_L{last}": x[f"userness_L{last}"].mean(), "obey_rate": o["rate"], "obey_lo": o["ci_lo"],
-                     "obey_hi": o["ci_hi"], "n": o["n"], "task_done": x.task_done.mean()})
-    return pd.DataFrame(rows), json.loads(fs.read_text())
-
-
 # ---------------------------------------------------------------- plots
 
 def _style(ax):
@@ -145,39 +127,6 @@ def plot_groups(dfs: dict[str, pd.DataFrame], path: Path):
     plt.close(fig)
 
 
-def plot_steer(tabs: dict[str, tuple[pd.DataFrame, dict]], dfs: dict[str, pd.DataFrame], path: Path):
-    """Test 4: Step 2's natural points (Userness bins of wrapper examples) and Step 3's steered points
-    on one Userness -> obey-rate axis, with the user and tool rates of Step A."""
-    fig, axes = plt.subplots(1, len(tabs), figsize=(4.6 * len(tabs), 3.8), squeeze=False, sharey=True)
-    for ax, (m, (t, summ)) in zip(axes[0], tabs.items()):
-        ucol = next(c for c in t.columns if c.startswith("userness_L"))
-        for y, lab in [(summ["user_rate"], "user rate"), (summ["tool_rate"], "tool rate")]:
-            ax.axhline(y, color=GRAY, ls="--", lw=1)
-            ax.text(1.0, y + 0.015, lab, color=MUTED, fontsize=7, ha="right", transform=ax.get_yaxis_transform())
-        df = dfs.get(m)
-        if df is not None and "obeyed" in df:
-            d = df[~df.native & df.obeyed.notna()].copy()
-            d["bin"] = pd.qcut(d.userness, 8, duplicates="drop")
-            b = d.groupby("bin", observed=True).agg(u=("userness", "mean"), o=("obeyed", lambda v: v.astype(float).mean()))
-            ax.scatter(b.u, b.o, s=18, color=GRAY, alpha=0.7, label="Step 2 wrappers (binned)", zorder=2)
-        for test, d, c, lab in [("1", "user", BLUE, "Test 1: tool result, toward user"),
-                                ("2", "tool", ORANGE, "Test 2: user message, toward tool"),
-                                ("3", "random", INK, "Test 3: random direction"),
-                                ("3", None, GREEN, "Test 3: other role")]:
-            x = t[(t.test == test) & ((t.direction == d) if d else ~t.direction.isin(["random"]))].sort_values("frac")
-            if len(x):
-                ax.errorbar(x[ucol], x.obey_rate, yerr=[x.obey_rate - x.obey_lo, x.obey_hi - x.obey_rate],
-                            color=c, marker="o", ms=4, lw=1.6, capsize=2, label=lab, zorder=3)
-        ax.set(xlabel=f"Userness of the instruction ({ucol.split('_')[1]})", xlim=(-0.02, 1.02), ylim=(-0.02, 1.05))
-        ax.set_title(m, fontsize=10, color=INK)
-        _style(ax)
-    axes[0][0].set_ylabel("obey rate")
-    axes[0][0].legend(frameon=False, fontsize=6.5, loc="lower right")
-    fig.tight_layout()
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-
-
 def _md(df: pd.DataFrame) -> str:
     return df.to_markdown(index=False, floatfmt=".3f")
 
@@ -186,7 +135,7 @@ def run(cfg: dict, names: list[str]) -> None:
     root = Path(cfg["out_dir"])
     summ = root / "summary"
     summ.mkdir(parents=True, exist_ok=True)
-    dfs, steers, headline, md = {}, {}, [], ["# Steps 2 and 3: results\n"]
+    dfs, headline, md = {}, [], ["# Step 2: results\n"]
     for m in names:
         out = root / m
         if not (out / "roleness.parquet").exists():
@@ -211,23 +160,11 @@ def run(cfg: dict, names: list[str]) -> None:
             md += ["\n### Base rate (no instruction)\n", _md(br),
                    (f"\nSpearman (per wrapper, tool result, non-native) Userness vs obey rate: rho = {corr['rho']:.3f}, "
                    f"permutation p = {corr['p_perm']:.3g}, n = {corr['n_styles']} wrappers.\n")]
-        res = steer_table(out)
-        if res is not None:
-            st, ssum = res
-            steers[m] = res
-            st.to_csv(summ / f"{m}_steer.csv", index=False)
-            h.update(user_rate=ssum["user_rate"], tool_rate=ssum["tool_rate"], precondition_met=ssum["precondition_met"])
-            note = ("Precondition met: the tests ran." if ssum["precondition_met"] else
-                    f"Precondition not met (|user rate - tool rate| < {ssum['min_gap']}): role does not drive this "
-                    "behavior for this model, so Tests 1-3 were skipped.")
-            md += ["\n### Steering (Step 3)\n", f"User rate {ssum['user_rate']:.3f}, tool rate {ssum['tool_rate']:.3f}. {note}\n", _md(st)]
         headline.append(h)
         md.append("")
     if not dfs:
         return
     plot_groups(dfs, summ / "userness_by_group.png")
-    if steers:
-        plot_steer(steers, dfs, summ / "steering.png")
     hl = pd.DataFrame(headline)
     hl.to_csv(summ / "headline.csv", index=False)
     md[1:1] = ["## Headline\n", _md(hl), ""]

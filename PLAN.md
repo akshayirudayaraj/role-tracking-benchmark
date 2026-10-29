@@ -29,6 +29,7 @@ We call the user percentage "Userness".
 4. Train a linear probe for each layer. The probe learns the role of each word.
 5. Do a test of each probe on texts that it did not see before.
 6. Select the layer with the best accuracy on the validation texts. Use this layer in Steps 2 and 3.
+   Also report the score of Step 2 at each layer.
 7. If the accuracy is near a random guess, stop. The meter does not work.
 
 Each text occurs one time in each role.
@@ -72,57 +73,58 @@ Measure these values for each model:
 - **Score**: the style effect divided by the tag effect. A high score shows that the model tracks roles from style more than from role tags.
 - **Obey rate**: the percentage of answers that obey the instruction. Also, a check that the model did the summary task.
 
-## Step 3: Steer the Userness (a test of the meter)
+## Step 3 (optional): Patch test of the meter
 
-This step finds if a change in the Userness has the same effect as a real change of the sender.
-We steer only the tokens of a plain instruction. The words and the role tags do not change.
+Steps 1 and 2 are the benchmark. They give a valid result about the representation of the role.
+Step 3 is an add-on. It finds if the model uses the signal that the meter reads.
+If the model does not use the signal, a style effect on the meter tells you nothing about the behavior of the model.
 
-**Step A (necessary condition, no steer).**
+**Why we do not steer.** In the pilot, we steered gpt-oss-20b until the meter read a target Userness.
+A steer of 0.3% of the size of the activation was sufficient to move the meter, but the output did not change.
+Thus a steer can move the meter and not the model. We removed this method.
+Instead, we copy real activations from one run into a different run.
 
-1. Put the instruction in the user message. Record the obey rate. This is the "user rate".
-2. Put the same instruction in a tool result. Record the obey rate. This is the "tool rate".
-3. If the two rates are almost the same, the role does not control the behavior of this model. Then the tests below cannot give a result. Report this and stop.
+**The meter subspace.** At the meter layer, each probe weight vector gives one direction in the residual stream.
+The meter subspace contains these directions: 4 dimensions for 5 roles, and 3 dimensions for 4 roles.
 
-**Test 1 (sufficient).**
+**The runs.** Use the plain instruction. Select two roles: a source role S and a target role T.
 
-1. Put the instruction in a tool result.
-2. The target is the Userness of the same instruction in the user message.
-3. Steer the instruction in the user direction until the meter reads the target. Use 4 strengths: 25%, 50%, 75%, and 100% of the distance to the target.
-4. Pass: the obey rate moves to the user rate.
+1. Run A: put the instruction in role S.
+2. Run B: put the same instruction in role T. Record the answer of the model.
+3. Run C: do Run A again. On the instruction tokens, replace the meter subspace with the values from Run B. Keep the other part of the activation.
+4. Run D: do Run A again. On the instruction tokens, replace the full activation with the values from Run B.
+5. Run E: do Run C again with a random subspace of the same size.
 
-**Test 2 (necessary).**
+The instruction tokens are the same in Run A and Run B. Thus each token in Run A has one matched token in Run B.
+Each run reads the answer of Run B with teacher forcing. We record the next-token distribution at each answer token.
 
-1. Put the instruction in the user message.
-2. Steer in the tool direction until the meter reads the Userness of the instruction in a tool result.
-3. Pass: the obey rate decreases to the tool rate.
+**The values.**
 
-**Test 3 (specific).**
+- Gap = KL(B, A). This is the difference between the output for role T and the output for role S.
+- Gap closed for Run X = 1 - KL(B, X) / Gap. A value of 0 shows no change. A value of 1 shows that Run X gives the same output as Run B.
+- Probe share = gap closed for Run C / gap closed for Run D.
+- Random share = gap closed for Run E / gap closed for Run D.
 
-1. Do Test 1 again with the same strengths in a random direction.
-2. Do Test 1 again with the direction of a different role (assistant).
-3. Pass: the random direction has no effect, and the assistant direction does not have the effect of the user direction.
+Run D is necessary because Run A and Run B have more differences than the role. The position and the text around the instruction are also different.
+The patch changes only the instruction tokens, thus it cannot remove these differences. Run D gives the maximum effect of a patch on the instruction tokens.
 
-If all directions increase the obey rate, the meter reads how much the model notices the text, and not the role.
-Test 3 doubles the generation of Test 1. If time is not sufficient, we remove Test 3 first.
+**Necessity check.** Do Run A and Run B again, and remove the meter subspace on the instruction tokens in both runs.
+Then calculate KL(B, A) again. If the meter subspace is necessary, the gap decreases much more than with a random subspace.
 
-**Test 4 (consistent).**
+**Pass.** The probe share is near 1, and the 95% bootstrap interval of the probe share is above the random share.
 
-1. Make one plot of the Userness against the obey rate.
-2. Put the points from Step 2 (the style wrappers) and the points from Test 1 (each strength) on the plot.
-3. Pass: the two sets of points are on the same curve.
+**Role pairs.** Start with the pair user and tool. Then do all pairs of roles, and report a grid of the probe share.
 
-Also, read the meter at the last layer after the steer, to see if the change continues through the model.
-For each condition, make sure that the model still does the summary task. If the summary fails, the steer damaged the model.
+**Optional: a check of the meter on the wrappers.** For each wrapper in the tool result, calculate an output Userness.
+The output Userness is the gap closed when the wrapped instruction replaces the plain instruction in the tool result.
+Then calculate the Spearman correlation between the output Userness and the meter Userness across the wrappers.
+The words of the wrapper also change the output. Thus this check is less clean than the patch test.
 
-**Interpretation.** If all the tests pass:
+**Interpretation.**
 
-- A change in the meter signal has the same effect as a real change of the sender (Test 1).
-- The model needs the signal (Test 2).
-- The signal is specific to the user role (Test 3).
-- A change of Userness from style and a change from the steer have the same effect (Test 4).
-
-This does not prove that the meter is fully correct, because we cannot know the real role that the model perceives.
-If a test fails, or if the results show no effect, the meter is not a good indicator of the role that controls the behavior. We will write this clearly in RESULTS.md.
+- If the test passes, the model uses the meter subspace for the role. Then a style effect on the meter is also a style effect on the role that controls the output.
+- If the test fails, the meter reads a signal that the model does not use. Then the result of Step 2 is only a result about the representation.
+- If Run D closes only a small part of the gap, the role effect does not come through the instruction tokens. Then the test cannot give a result.
 
 ## Code standard
 
@@ -143,7 +145,7 @@ We will give the code with the results. The code must be at the standard of a re
 - RESULTS.md with:
   - The probe accuracy for each model.
   - The score and the obey rates of each model (Step 2).
-  - A plot of the obey rate against the Userness for the steer test (Step 3).
+  - The probe share for each pair of roles (Step 3, optional).
   - A list of the limits of the method.
 
 ## Time and cost on one A40
@@ -153,8 +155,8 @@ We will give the code with the results. The code must be at the standard of a re
 | Download of the models | 3 to 10 min | 15 min |
 | Step 1 (meter, all layers) | 10 to 15 min | 40 min |
 | Step 2 (about 1000 prompts, measurement and answers) | 20 to 60 min | 1.5 h |
-| Step 3 (about 600 answers) | 15 to 45 min | 1.25 h |
-| Total | | about 4 h |
+| Step 3 (forward passes, user and tool pair only) | 5 to 15 min | 30 min |
+| Total | | about 3.5 h |
 
 The answers take most of the time. The probes for all layers need approximately 10 minutes to train.
 gpt-oss-20b is the slowest model, because it writes thinking text before each answer.
@@ -163,12 +165,7 @@ An A40 costs approximately $0.35 to $0.45 for each hour on RunPod. Make sure tha
 Total cost: approximately $1.50 to $3, and less than $5 with idle time.
 Stop the pod after the run. A stopped pod with a 100 GB volume costs a few cents each day.
 
-## Plan for tonight
+## Status
 
-The deadline is 8 PM ET today. Thus, we do the work in this sequence:
-
-1. Write the code and do the small test on the CPU.
-2. Run Qwen3-8B on the A40 (about 1 hour). Write RESULTS.md from these results.
-3. Run Llama-3.1-8B and gpt-oss-20b. Add their results to RESULTS.md.
-
-If time is not sufficient, we give the results of Qwen3-8B and Llama-3.1-8B only.
+The pilot is complete for Steps 1 and 2. The results are in RESULTS.md.
+Step 3 is not implemented. The obey-rate steer of the first plan is removed (see "Why we do not steer").

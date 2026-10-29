@@ -1,8 +1,0 @@
-{
- "user_rate": 1.0,
- "tool_rate": 0.9722222222222222,
- "userness_user": 0.3657631791300244,
- "userness_tool": 0.07208852099979089,
- "min_gap": 0.15,
- "precondition_met": false
-}

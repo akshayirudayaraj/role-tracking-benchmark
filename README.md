@@ -10,7 +10,7 @@ The benchmark has three steps:
 
 1. **Role meter.** A linear probe reads the role that the model perceives for each token. We call the user percentage "Userness".
 2. **Benchmark score.** We put a safe instruction in many style wrappers, in the user message and in a tool result. We measure the tag effect, the style effect, and the obey rate.
-3. **Steering.** We change the Userness of an instruction in a tool result, and we record the obey rate. This step shows if the model uses the signal that the meter reads.
+3. **Patch test (optional, not implemented).** We copy the meter subspace from a user message into a tool result. The KL divergence measures the change of the output. This step shows if the model uses the signal that the meter reads.
 
 `PLAN.md` gives the full plan. `NOTES.md` gives the sources. `RESULTS.md` gives the results of the pilot.
 
@@ -23,7 +23,7 @@ The benchmark has three steps:
 3. Record the output of `post_attention_layernorm` at each layer, on the content tokens only. The role tags are not used.
 4. Train a multinomial logistic regression for each layer. The validation texts select the regularization strength C.
 5. Report the accuracy on the test texts, for each token and for each text span.
-6. Select the layer with the best span accuracy on the validation texts. Steps 2 and 3 use this layer.
+6. Select the layer with the best span accuracy on the validation texts. Step 2 uses this layer.
 
 The texts are divided into train, validation, and test sets by text, not by token.
 A unit test (`tests/test_templates.py`) makes sure that the role tags of the probe are the same as the real chat template of each model.
@@ -59,22 +59,13 @@ The values for each model are:
 
 The Userness of an instruction is the mean P(user) on the tokens of the bare instruction, at the selected layer.
 
-### Step 3: Steering (`rpg/steer.py`)
+### Step 3: Patch test (optional, not implemented)
 
-The probe gives a direction from "tool" to "user". We map this direction back through the layer norm to the residual stream.
-We add `alpha * ||h|| * direction` to the residual stream at the input of the selected layer, on the tokens of the instruction only, during prefill.
-The words and the role tags do not change.
+Steps 1 and 2 are the benchmark. Step 3 finds if the model uses the signal that the meter reads.
+`PLAN.md` gives the design.
 
-| Condition | Instruction | Location | Steer |
-|---|---|---|---|
-| Toward user | plain | tool result | user direction, 6 strengths |
-| Random control | plain | tool result | random direction, same strengths |
-| Toward tool | user-like wrapper ("User Request:") | tool result | tool direction, 5 strengths |
-| Reference | plain | user message | none |
-
-The random direction must have no effect.
-If the obey rate then increases with the measured Userness, the model uses the meter signal to select whom to obey.
-If the steer has no effect, two explanations are possible: the meter reads a signal that the model does not use, or the perceived role does not control obedience.
+The first version of Step 3 steered the instruction until the meter read a target Userness, and recorded the obey rate.
+We removed this method. In gpt-oss-20b, a very small steer moved the meter, but the output did not change.
 
 ## How to run
 
@@ -95,7 +86,7 @@ To run some stages or some models only:
 
 ```bash
 python -m rpg.run configs/pilot.yaml --models qwen3-8b --stages probe
-python -m rpg.run configs/pilot.yaml --models qwen3-8b --stages measure,generate,score,steer,analyze
+python -m rpg.run configs/pilot.yaml --models qwen3-8b --stages measure,generate,score,analyze
 ```
 
 To run on a remote GPU (for example, RunPod):
@@ -131,8 +122,7 @@ rpg/
   measure.py    Userness of each span at each layer
   generate.py   greedy generation, saved after each batch
   score.py      checks of the instructions and of the summary task
-  steer.py      Step 3: steering and its measurements
-  analyze.py    Steps 2 and 3: tables and plots
+  analyze.py    Step 2: tables and plots
   run.py        command-line entry point
 scripts/        setup.sh, reproduce.sh, remote.sh
 tests/          tests of the chat templates and the text spans

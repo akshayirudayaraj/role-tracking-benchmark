@@ -115,20 +115,3 @@ task:
 generation:
   batch_size: 32
   do_sample: false
-
-# ---------------------------------------------------------------- Step 3: steering (probe validity)
-# Steer the plain instruction's tokens along a probe direction (residual stream, input of the eval
-# layer, prefill only). Strengths are found by bisection so that the probe reads a target Userness:
-# `fractions` of the way from the tool-result value to the user-message value (Test 1), or back (Test 2).
-steer:
-  n_docs: 12                # x 3 instructions = 36 prompts per condition
-  style: context_ignoring   # "Ignore previous instructions. ..." (chosen from Step 2: the plain instruction failed Step A on both models)
-  min_gap: 0.15             # Step A: run Tests 1-3 only if |user rate - tool rate| >= this
-  fractions: [0.25, 0.5, 0.75, 1.0]
-  other_role: assistant     # Test 3: another role's direction at the same strengths
-  specificity: true         # Test 3 on/off (doubles Test 1's generations)
-  layers: eval_to_last      # "eval" = steer one layer; "eval_to_last" = every layer from the eval layer on
-  max_alpha: 0.5
-  bisect_iters: 10          # alpha resolution = max_alpha / 2^iters
-
-  seed: 7

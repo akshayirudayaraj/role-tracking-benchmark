@@ -34,8 +34,8 @@ def generate(cfg: dict, mcfg: dict, model, tok, rows: list[dict], path: Path, ke
              hook: Callable[[list[dict], list[int]], object] | None = None, desc: str = "generate") -> dict[str, dict]:
     """Generate an answer for each row; results are cached in `path` by `row[key]`.
 
-    `hook(chunk, offsets)` may return a context manager that is active during generation (Step 3 uses
-    it to steer activations on specific token positions of each row)."""
+    `hook(chunk, offsets)` may return a context manager that is active during generation (for example, to
+    edit activations on specific token positions of each row)."""
     done = {}
     if path.exists():
         done = {g[key]: g for g in map(json.loads, path.read_text().splitlines())}
