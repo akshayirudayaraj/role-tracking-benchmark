@@ -84,55 +84,78 @@ The obey rate is not a clean measure of the role: the model can know the role an
 ## Step 3 (optional): Patch test of the meter
 
 Steps 1 and 2 are the benchmark. They give a valid result about the representation of the role.
-Step 3 is an add-on. It finds if the model uses the signal that the meter reads.
-If the model does not use the signal, a style effect on the meter tells you nothing about the behavior of the model.
+Step 3 is an add-on. It finds if the attention heads that control the output read the signal that the meter reads.
+If the heads do not read the signal, a style effect on the meter tells you nothing about the output of the model.
 
 **Why we do not steer.** In the pilot, we steered gpt-oss-20b until the meter read a target Userness.
 A steer of 0.3% of the size of the activation was sufficient to move the meter, but the output did not change.
 Thus a steer can move the meter and not the model. We removed this method.
 Instead, we copy real activations from one run into a different run.
 
-**The meter subspace.** At the meter layer, each probe weight vector gives one direction in the residual stream.
-The meter subspace contains these directions: 4 dimensions for 5 roles, and 3 dimensions for 4 roles.
+**Source of the method.** Step 3 uses the parts of V-Steer (`NOTES.md`, section 3) that read and change the V vectors of a token span.
+V-Steer edits the cached V vectors of a span at selected heads. Thus it changes how much the later tokens read the span.
+The meter reads the residual stream at the span. Thus it shows the role that the model writes on the span.
+Step 3 connects the two.
 
-**The runs.** Use the plain instruction. Select two roles: a source role S and a target role T.
+**Definitions.**
 
-1. Run A: put the instruction in role S.
-2. Run B: put the same instruction in role T. Record the answer of the model.
-3. Run C: do Run A again. On the instruction tokens, replace the meter subspace with the values from Run B. Keep the other part of the activation.
-4. Run D: do Run A again. On the instruction tokens, replace the full activation with the values from Run B.
-5. Run E: do Run C again with a random subspace of the same size.
+- **Meter subspace**: at the meter layer, each probe weight vector gives one direction in the residual stream. The subspace contains these directions: 4 dimensions for 5 roles, and 3 dimensions for 4 roles.
+- **Head output from the span**: at the last prompt token, the sum of attention weight x V vector x output weight over the instruction tokens. V-Steer calculates the same value in `dla.py`.
+- **Selected heads**: the 32 heads after the meter layer with the largest difference of head output from the span between Run A and Run B.
+
+**The runs.** Use the plain instruction. Select two tags: a source tag S and a target tag T.
+
+1. Run A: put the instruction under tag S.
+2. Run B: put the same instruction under tag T. Record the answer of the model.
+3. Run C (V patch): do Run A again. At the selected heads, replace the V vectors of the instruction tokens with the values from Run B.
+4. Run D (full patch): do Run A again. At the meter layer, replace the full residual stream on the instruction tokens with the values from Run B.
+5. Run E (meter patch): do Run D again, but replace only the meter subspace. Keep the other part of the activation.
+6. Run F (random patch): do Run E again with a random subspace of the same size.
 
 The instruction tokens are the same in Run A and Run B. Thus each token in Run A has one matched token in Run B.
-Each run reads the answer of Run B with teacher forcing. We record the next-token distribution at each answer token.
+The V vectors do not contain the position of the token. Thus a V patch from a different position is correct.
+
+**The measurement.** Each run reads the first 16 tokens of the answer of Run B with teacher forcing.
+We record the next-token distribution at each of these tokens.
 
 **The values.**
 
-- Gap = KL(B, A). This is the difference between the output for role T and the output for role S.
+- Gap = KL(B, A). This is the difference between the output for tag T and the output for tag S.
 - Gap closed for Run X = 1 - KL(B, X) / Gap. A value of 0 shows no change. A value of 1 shows that Run X gives the same output as Run B.
-- Probe share = gap closed for Run C / gap closed for Run D.
-- Random share = gap closed for Run E / gap closed for Run D.
+- Readout share = gap closed for Run C / gap closed for Run D. This shows how much of the role effect goes through the selected heads.
+- Probe share = gap closed for Run E / gap closed for Run D. This shows how much of the role effect comes from the meter subspace.
+- Random share = gap closed for Run F / gap closed for Run D.
+- V match = 1 - |V(B) - V(E)| / |V(B) - V(A)| at the selected heads. This shows if the meter patch makes the V vectors of the heads move to Run B.
 
-Run D is necessary because Run A and Run B have more differences than the role. The position and the text around the instruction are also different.
+Run D is necessary because Run A and Run B have more differences than the tag. The position and the text around the instruction are also different.
 The patch changes only the instruction tokens, thus it cannot remove these differences. Run D gives the maximum effect of a patch on the instruction tokens.
 
-**Necessity check.** Do Run A and Run B again, and remove the meter subspace on the instruction tokens in both runs.
-Then calculate KL(B, A) again. If the meter subspace is necessary, the gap decreases much more than with a random subspace.
-
-**Pass.** The probe share is near 1, and the 95% bootstrap interval of the probe share is above the random share.
-
-**Role pairs.** Start with the pair user and tool. Then do all pairs of roles, and report a grid of the probe share.
-
-**Optional: a check of the meter on the wrappers.** For each wrapper in the tool result, calculate an output Userness.
-The output Userness is the gap closed when the wrapped instruction replaces the plain instruction in the tool result.
-Then calculate the Spearman correlation between the output Userness and the meter Userness across the wrappers.
-The words of the wrapper also change the output. Thus this check is less clean than the patch test.
+**Pass.** The probe share and the V match are near 1. The 95% bootstrap interval of the probe share is above the random share.
 
 **Interpretation.**
 
-- If the test passes, the model uses the meter subspace for the role. Then a style effect on the meter is also a style effect on the role that controls the output.
-- If the test fails, the meter reads a signal that the model does not use. Then the result of Step 2 is only a result about the representation.
-- If Run D closes only a small part of the gap, the role effect does not come through the instruction tokens. Then the test cannot give a result.
+| Result | Meaning |
+|---|---|
+| Run D closes the gap, and the probe share is high. | The meter is valid. Step 2 measures the role that controls the output. |
+| Run D closes the gap, but the probe share is low. | The heads read a role signal, but not the meter signal. Step 2 is only a result about the representation. |
+| Run D closes only a small part of the gap. | The role does not get to the output through the instruction tokens. Step 3 cannot give a result. |
+
+**Where role confusion occurs.** There are two possible errors:
+
+- Wrong label: the model writes the wrong role on the tokens. The meter shows this error (Step 2).
+- Wrong readout: the model writes the correct role, but the selected heads read the span as if it has a different role.
+
+For each wrapper under the tool tag, compare the meter value with the head output from the span. Then you can find which error occurs.
+This can also explain why V-Steer fails on instructions in a tool result.
+
+**Order of the work.**
+
+1. The tags user and tool, on Llama-3.1-8B and Qwen3-8B.
+2. The tags system and user. This is the main case of V-Steer.
+3. All pairs of tags. Report a grid of the probe share.
+4. gpt-oss-20b. Its attention has sink tokens, layers with a sliding window, and MXFP4 weights. Thus the code for the V vectors needs more work.
+
+Step 3 does not show that the meter value is correct for each wrapper. It measures only the first 16 answer tokens.
 
 ## Code standard
 
@@ -153,7 +176,7 @@ We will give the code with the results. The code must be at the standard of a re
 - RESULTS.md with:
   - The probe accuracy for each model.
   - The confusion table, the tag effect, the style effect, and the score of each model (Step 2).
-  - The probe share for each pair of roles (Step 3, optional).
+  - The readout share, the probe share, and the V match for each pair of tags (Step 3, optional).
   - A list of the limits of the method.
 
 ## Time and cost on one A40
@@ -163,14 +186,14 @@ We will give the code with the results. The code must be at the standard of a re
 | Download of the models | 3 to 10 min | 15 min |
 | Step 1 (meter, all layers) | 10 to 15 min | 40 min |
 | Step 2 (about 9,500 prompts, forward passes only) | 15 to 30 min | 1.25 h |
-| Step 3 (forward passes, user and tool pair only) | 5 to 15 min | 30 min |
-| Total | | about 2.5 h |
+| Step 3 (forward passes, all pairs of tags) | 15 to 30 min | 1 h |
+| Total | | about 3 h |
 
 The forward passes of Step 2 take most of the time. The probes for all layers need approximately 10 minutes to train.
 gpt-oss-20b is the slowest model.
 
 An A40 costs approximately $0.35 to $0.45 for each hour on RunPod. Make sure that you examine the current price.
-Total cost: approximately $1 to $2, with a limit of $10.
+Total cost: approximately $2 to $3, with a limit of $10.
 
 Stop the pod after the run. A stopped pod with a 100 GB volume costs a few cents each day.
 
@@ -178,5 +201,5 @@ Stop the pod after the run. A stopped pod with a 100 GB volume costs a few cents
 
 The pilot is complete for Steps 1 and 2 with the user tag and the tool tag only. The results are in RESULTS.md.
 The next run does Step 2 with all the tags.
-The design of Step 3 is not final. We will compare it with the method of V-Steer (`NOTES.md`, section 3).
+Step 3 is not implemented.
 The obey-rate steer of the first plan is removed (see "Why we do not steer").
