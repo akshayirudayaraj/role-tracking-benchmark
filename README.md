@@ -6,7 +6,7 @@ Role tags are the special tokens that show the sender of a message: system, user
 If a model uses style, an instruction in a web page can look like an instruction from the user.
 The paper [*Prompt Injection as Role Confusion*](https://arxiv.org/abs/2603.12277) gives this as a cause of prompt injection.
 
-`RESULTS.md` gives the results. `PLAN.md` gives the full design. `NOTES.md` gives the sources.
+`RESULTS.md` gives the results. `NOTES.md` gives the sources.
 
 ## Method
 

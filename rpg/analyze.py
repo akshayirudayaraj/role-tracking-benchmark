@@ -74,7 +74,7 @@ def confusion(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def tag_scores(df: pd.DataFrame) -> pd.DataFrame:
-    """Per tag T (PLAN.md, Step 2): true-role value of the plain instruction, tag effect, style effect
+    """Per tag T (README.md, Step 2): true-role value of the plain instruction, tag effect, style effect
     (plain value minus the 10th percentile across wrappers), score, and the role the worst wrappers pull toward."""
     d = df[~df.native]
     plain = d[d.style_id == PLAIN]
