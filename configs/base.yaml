@@ -109,6 +109,8 @@ styles:
 #   thinking  = a closed thinking block before the answer (models with a thinking block only)
 #   clean     = no instruction (base rate of each obey check; only with generation)
 placements: [system, user, assistant, tool, thinking]
+# conversation = each tag in a realistic chat (above); single = the probe's training format (configs/single.yaml)
+layout: conversation
 include_clean_baseline: false
 
 task:

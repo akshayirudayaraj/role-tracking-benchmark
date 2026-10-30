@@ -7,6 +7,7 @@ from transformers import AutoTokenizer
 from rpg.config import load_config, model_cfg
 from rpg.dataset import build_examples, load_docs
 from rpg.probe import roles_for
+from rpg.prompts import make_row
 from rpg.templating import (
     FETCH_TOOL,
     char_spans_to_token_idx,
@@ -90,3 +91,18 @@ def test_instruction_under_its_tag(name):
         last_pre = max(prompt.rfind(mcfg["probe_wrappers"][r][0].split("\n")[0].rstrip('"'), 0, i)
                        for r in roles_for(CFG, mcfg) if r != tag)
         assert prompt.rfind(pre, 0, i) >= last_pre, f"{name}/{tag}: another tag is closer to the instruction"
+
+
+@pytest.mark.parametrize("name", list(CFG["models"]))
+def test_single_layout(name):
+    """`layout: single`: each tag's prompt is the probe format, and the instruction is locatable."""
+    mcfg, tok = model_cfg(CFG, name), _tok(name)
+    cfg = {**CFG, "layout": "single", "n_docs": 1}
+    doc = load_docs(cfg, 1)[0]
+    for ex in build_examples(cfg):
+        if ex["placement"] not in roles_for(CFG, mcfg) or ex["style_id"] not in ("naive", "paper000"):
+            continue
+        row = make_row(cfg, mcfg, tok, ex, doc)
+        pre, suf = mcfg["probe_wrappers"][ex["placement"]]
+        assert row["prompt"].endswith(suf) and pre in row["prompt"]
+        assert "request" not in row["span_tokens"] and len(row["span_tokens"]["injection_core"]) >= 3

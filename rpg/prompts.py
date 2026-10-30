@@ -2,18 +2,32 @@
 import json
 
 from rpg.dataset import build_examples, load_docs
-from rpg.probe import roles_for
+from rpg.probe import roles_for, system_header
 from rpg.templating import (
     char_spans_to_token_idx,
+    inject,
     is_native,
     locate_spans,
     render_prompt,
 )
 
 
+def single_prompt(cfg: dict, mcfg: dict, tok, ex: dict, doc: dict, inj: str) -> str:
+    """`layout: single`: the probe's own training format. The real system header, then the document +
+    instruction alone under the tag (no request, no other turns), so every tag has the same layout."""
+    pre, suf = mcfg["probe_wrappers"][ex["placement"]]
+    text = inject(doc["text"], inj)
+    if ex["placement"] in mcfg.get("json_escape_roles", []):
+        text = json.dumps(text)[1:-1]
+    return system_header(mcfg, tok) + pre + text + suf
+
+
 def make_row(cfg: dict, mcfg: dict, tok, ex: dict, doc: dict) -> dict:
     inj = ex["injection"]
-    prompt = render_prompt(tok, cfg, mcfg, ex, doc, inj)
+    if cfg.get("layout", "conversation") == "single":
+        prompt = single_prompt(cfg, mcfg, tok, ex, doc, inj)
+    else:
+        prompt = render_prompt(tok, cfg, mcfg, ex, doc, inj)
     spans = locate_spans(prompt, cfg, ex, doc, inj)
     ids, span_tok = char_spans_to_token_idx(tok, prompt, spans)
     native = inj is not None and is_native(tok, inj, cfg["payloads"][ex["payload"]]["instruction"])

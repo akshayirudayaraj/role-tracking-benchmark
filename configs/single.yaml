@@ -1,0 +1,5 @@
+# Step 2 in the probe's own format: the document + wrapped instruction alone under each tag, after the
+# real system header. Every tag has the same layout (PLAN.md, Step 2). Forward passes only.
+extends: base.yaml
+out_dir: runs/single
+layout: single

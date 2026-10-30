@@ -89,7 +89,9 @@ def _find(prompt: str, text: str, start: int = 0) -> tuple[int, int] | None:
 def locate_spans(prompt: str, cfg: dict, ex: dict, doc: dict, inj: str | None) -> dict:
     """Character spans of interest in the rendered prompt: the user's request, the document body, the
     whole wrapped injection, and `injection_core` (the bare instruction, where Userness is read)."""
-    spans = {"request": _find(prompt, request(cfg, ex, doc)), "doc_body": _find(prompt, doc["text"])}
+    spans = {"doc_body": _find(prompt, doc["text"])}
+    if cfg.get("layout", "conversation") != "single":  # the single layout has no request
+        spans["request"] = _find(prompt, request(cfg, ex, doc))
     if inj is not None:
         spans["injection"] = _find(prompt, inj, start=spans["doc_body"][0] if spans["doc_body"] else 0)
         instr = cfg["payloads"][ex["payload"]]["instruction"]
