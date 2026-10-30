@@ -9,3 +9,4 @@ run_*.log
 runs/*/*/prompts.jsonl
 runs/*/*/roleness.parquet
 queue.sh
+runs/smoke_single/
