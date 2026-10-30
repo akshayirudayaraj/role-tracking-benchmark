@@ -7,7 +7,6 @@ The method is in `README.md`. The tables and the plots are in `runs/<config>/sum
 |---|---|---|
 | Main score (single layout) | `configs/single.yaml` | `bash scripts/reproduce.sh single` |
 | Realistic check (conversation layout) | `configs/alltags.yaml` | `bash scripts/reproduce.sh alltags` |
-| Pilot (user and tool tags, with answers) | `configs/pilot.yaml` | `bash scripts/reproduce.sh pilot` |
 
 ## Summary
 
@@ -25,11 +24,11 @@ The method is in `README.md`. The tables and the plots are in `runs/<config>/sum
 | gpt-oss-20b | 5 | 16 of 24 | 0.88 | 0.97 |
 | Llama-3.1-8B | 4 (no thinking) | 7 of 32 | 0.91 | 0.98 |
 
-![probe accuracy](runs/pilot/summary/probe_accuracy.png)
+![probe accuracy](runs/single/summary/probe_accuracy.png)
 
 - For gpt-oss-20b and Llama-3.1-8B, the layer has the best accuracy on the validation texts.
 - For Qwen3-8B, the best layer is layer 2. At an early layer, the probe can read which tag token is near. Thus we use the middle layer (18), as the role-confusion paper does.
-- The full confusion tables are in `runs/pilot/summary/probes.md`.
+- The full confusion tables are in `runs/single/summary/probes.md`.
 
 ## Step 2: Benchmark score (single layout)
 
@@ -114,21 +113,6 @@ Each prompt is a realistic chat. For example, the tool text comes after a tool c
 - **The meter does not read some tags correctly in this layout**. It reads the tool text as "thinking" (Qwen3-8B) or "assistant" (Llama-3.1-8B), and the system message of Llama-3.1-8B as "user".
 - "Not seen" shows a tag effect of less than 0.1. These tags are not in the model score.
 - Thus a part of the confusion in this layout is an error of the meter, not of the model. The single layout does not have this problem, thus it gives the main score.
-
-## Pilot: user and tool tags, with obey rates
-
-The pilot used the user tag and the tool tag only, in the conversation layout. It also recorded if the model obeyed the instruction.
-
-| Value | Qwen3-8B | Llama-3.1-8B | gpt-oss-20b |
-|---|---|---|---|
-| User/tool score (spread of Userness in the tool result / tag effect) | 0.36 | 0.005 | 0.34 |
-| Obey rate, tool result / user message | 0.99 / 1.00 | not valid / 0.99 | 0.91 / 0.99 |
-| Spearman, Userness against obey rate (tool result) | 0.13 (p = 0.07) | not valid | **0.29 (p = 0.0005)** |
-
-- In gpt-oss-20b, a wrapper with more Userness in the tool result got obeyed more frequently.
-- Qwen3-8B obeyed almost all instructions in all conditions. Thus its obey rate cannot show an effect of the role.
-- Llama-3.1-8B called the tool again in 78% of its tool-result answers. Thus its obey rate in the tool result is not valid.
-- The benchmark does not use the obey rate, because the obey rate also depends on whether the model wants to follow the instruction.
 
 ## Limits
 
